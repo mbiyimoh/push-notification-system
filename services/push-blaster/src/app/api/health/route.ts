@@ -111,11 +111,11 @@ export async function GET() {
   const [seconds, nanoseconds] = process.hrtime(startTime);
   health.responseTimeMs = (seconds * 1000 + nanoseconds / 1000000).toFixed(2);
 
-  // Return proper HTTP status codes for health monitoring
-  const httpStatus = health.status === 'healthy' ? 200 : 503;
-
+  // Always return 200 for Railway healthcheck - service is running
+  // Detailed health status is in the response body for monitoring
+  // Railway just needs to confirm the process is responsive
   return NextResponse.json(health, {
-    status: httpStatus,
+    status: 200,
     headers: {
       'Cache-Control': 'no-store, no-cache, must-revalidate',
       'X-Health-Status': health.status
