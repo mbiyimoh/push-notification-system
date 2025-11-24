@@ -1,9 +1,8 @@
 [build]
-builder = "NIXPACKS"
-rootDirectory = "services/push-blaster"
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
 
 [deploy]
-startCommand = "npm run start:railway"
 healthcheckPath = "/api/health"
 healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"
