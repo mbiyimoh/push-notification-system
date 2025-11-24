@@ -1,0 +1,39 @@
+{
+  "name": "push-cadence-service",
+  "version": "0.1.1",
+  "private": true,
+  "engines": {
+    "node": "20.19.5",
+    "npm": ">=10.0.0"
+  },
+  "scripts": {
+    "dev": "dotenv -e ../../.env -- next dev -p 3002",
+    "build": "next build",
+    "start": "dotenv -e ../../.env -- next start -p 3002",
+    "start:railway": "next start --port $PORT",
+    "lint": "next lint",
+    "migrate": "node scripts/run-migration.js",
+    "postinstall": "npm run migrate || echo 'Migration failed or skipped - continuing...'"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "dotenv-cli": "^7.4.4",
+    "next": "15.4.6",
+    "papaparse": "^5.5.3",
+    "pg": "^8.16.3",
+    "react": "19.1.0",
+    "react-dom": "19.1.0"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3",
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/pg": "^8.15.5",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "15.4.6",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}

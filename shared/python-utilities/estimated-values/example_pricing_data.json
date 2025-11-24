@@ -1,0 +1,11 @@
+[
+    {"size": "8", "min_price": "120", "max_price": "190"},
+    {"size": "8.5", "min_price": "125", "max_price": "195"},
+    {"size": "9", "min_price": "130", "max_price": "200"},
+    {"size": "9.5", "min_price": "135", "max_price": "205"},
+    {"size": "10", "min_price": "140", "max_price": "210"},
+    {"size": "10.5", "min_price": "145", "max_price": "215"},
+    {"size": "11", "min_price": "150", "max_price": "220"},
+    {"size": "11.5", "min_price": "155", "max_price": "225"},
+    {"size": "12", "min_price": "160", "max_price": "230"}
+]

@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "SlashCommand(/spec:validate:*)",
+      "SlashCommand(/spec:execute:*)",
+      "SlashCommand(/preflight-discovery:*)",
+      "SlashCommand(/spec:create:*)",
+      "SlashCommand(/dev:cleanup)",
+      "Bash(cat:*)",
+      "SlashCommand(/git:commit)",
+      "WebSearch",
+      "WebFetch(domain:docs.railway.com)",
+      "SlashCommand(/spec:decompose:*)",
+      "SlashCommand(/task-context:*)",
+      "SlashCommand(/spec:ideate:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

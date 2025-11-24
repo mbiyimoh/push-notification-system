@@ -1,0 +1,4 @@
+user_id,email,name
+123e4567-e89b-12d3-a456-426614174000,user1@example.com,John Doe
+456e7890-e89b-12d3-a456-426614174001,user2@example.com,Jane Smith
+789e0123-e89b-12d3-a456-426614174002,user3@example.com,Bob Johnson

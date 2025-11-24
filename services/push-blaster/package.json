@@ -1,0 +1,59 @@
+{
+  "name": "push-blaster",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": "20.19.5",
+    "npm": ">=10.0.0"
+  },
+  "scripts": {
+    "dev": "concurrently --names \"PUSH-BLASTER,CADENCE-SERVICE\" --prefix-colors \"blue,green\" \"npm run dev:push-only\" \"npm run dev:cadence\"",
+    "dev:push-only": "dotenv -e ../../.env -- next dev -p 3001",
+    "dev:cadence": "cd ../push-cadence-service && npm run dev",
+    "build": "next build",
+    "start": "dotenv -e ../../.env -- next start -p 3001",
+    "start:railway": "next start --port $PORT",
+    "lint": "next lint",
+    "dev:push": "npm run dev",
+    "build:prod": "npm run build && cd ../push-cadence-service && npm run build",
+    "start:prod": "concurrently --names \"PUSH-BLASTER,CADENCE-SERVICE\" --prefix-colors \"blue,green\" \"npm:start\" \"npm:start:cadence\"",
+    "start:prod:logs": "concurrently --names \"PUSH-BLASTER,CADENCE-SERVICE\" --prefix-colors \"blue,green\" \"npm:start:blaster:log\" \"npm:start:cadence:log\"",
+    "start:blaster:log": "npm run start > push-blaster.log 2>&1",
+    "start:cadence:log": "cd ../push-cadence-service && npm run start > cadence.log 2>&1",
+    "start:cadence": "cd ../push-cadence-service && npm run start",
+    "pm2:start": "./node_modules/.bin/pm2 start ecosystem.config.js",
+    "pm2:stop": "./node_modules/.bin/pm2 stop ecosystem.config.js",
+    "pm2:restart": "./node_modules/.bin/pm2 restart ecosystem.config.js",
+    "pm2:logs": "./node_modules/.bin/pm2 logs"
+  },
+  "dependencies": {
+    "@types/node-cron": "^3.0.11",
+    "@types/pg": "^8.15.4",
+    "@types/uuid": "^10.0.0",
+    "dotenv": "^17.2.0",
+    "dotenv-cli": "^8.0.0",
+    "firebase-admin": "^13.4.0",
+    "jszip": "^3.10.1",
+    "next": "15.3.5",
+    "node-cron": "^4.2.1",
+    "papaparse": "^5.5.3",
+    "pg": "^8.16.3",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "uuid": "^11.1.0"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3",
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/papaparse": "^5.3.16",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "concurrently": "^9.2.0",
+    "eslint": "^9",
+    "eslint-config-next": "15.3.5",
+    "pm2": "^5.4.2",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}

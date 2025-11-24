@@ -1,0 +1,5 @@
+user_id,layer_id,push_title,push_body,sent_at,audience_description
+123e4567-e89b-12d3-a456-426614174000,1,"New Drop Alert","Check out the latest sneaker drop on Tradeblock!","2025-01-01T10:00:00Z","Platform-wide announcement"
+456e7890-e89b-12d3-a456-426614174001,2,"Top Trading Shoe Alert","Air Jordan 1 is trending with high activity","2025-01-02T14:30:00Z","Product trend trigger"
+789e0123-e89b-12d3-a456-426614174002,3,"Your Wishlist Item is Available","The shoe you've been watching is now available","2025-01-03T09:15:00Z","Behavior-responsive"
+987e6543-e89b-12d3-a456-426614174003,4,"Test Notification","This is a test notification","2025-01-04T16:45:00Z","Test push"
