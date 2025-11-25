@@ -20,12 +20,16 @@ out/
 logs/
 *.log.*
 
-# Push-specific artifacts
-services/push-blaster/.automations/
+# Push-specific artifacts (runtime outputs, not configs)
+services/push-blaster/.automations/executions/
+services/push-blaster/.automations/audience-cache/
+services/push-blaster/.automations/logs/
 services/push-blaster/.script-outputs/
 services/push-blaster/.push-logs/
 services/push-blaster/.scheduled-pushes/
 generated_csvs/
+audience-generation-scripts/generated_csvs/
+audience-generation-scripts/tmp/
 
 # Python
 __pycache__/

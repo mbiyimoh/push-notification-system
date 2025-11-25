@@ -1,18 +1,27 @@
 {
   "permissions": {
     "allow": [
+      "Bash(export:*)",
+      "Bash(python3:*)",
+      "SlashCommand(/dev:cleanup)",
+      "SlashCommand(/spec:create Automated weekly scheduling (cron job) to run the eBay Playwright scraper and ETL pipeline, ensuring each weekly run stores results in the PostgreSQL database with proper execution date tracking to enable longitudinal trend analysis over time)",
       "SlashCommand(/spec:validate:*)",
       "SlashCommand(/spec:execute:*)",
-      "SlashCommand(/preflight-discovery:*)",
       "SlashCommand(/spec:create:*)",
-      "SlashCommand(/dev:cleanup)",
-      "Bash(cat:*)",
-      "SlashCommand(/git:commit)",
+      "Read(//Users/AstroLab/Desktop/code-projects/tradeblock-cursor/**)",
       "WebSearch",
-      "WebFetch(domain:docs.railway.com)",
-      "SlashCommand(/spec:decompose:*)",
       "SlashCommand(/task-context:*)",
-      "SlashCommand(/spec:ideate:*)"
+      "SlashCommand(/research-building-blocks:*)",
+      "WebFetch(domain:github.com)",
+      "SlashCommand(/preflight-discovery:*)",
+      "SlashCommand(/spec:decompose:*)",
+      "WebFetch(domain:pudding.cool)",
+      "WebFetch(domain:vallandingham.me)",
+      "WebFetch(domain:jaehyeon.me)",
+      "WebFetch(domain:slamgoods.com)",
+      "WebFetch(domain:supabase.com)",
+      "SlashCommand(/create-dev-guide:*)",
+      "WebFetch(domain:docs.railway.com)"
     ],
     "deny": [],
     "ask": []

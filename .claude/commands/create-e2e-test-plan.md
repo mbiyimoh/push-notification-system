@@ -17,53 +17,6 @@ Before writing the test plan, systematically analyze:
 4. **Identify Dependencies**: Check what external services, databases, or APIs are involved
 5. **Review Existing Tests**: Check if similar test plans exist in `e2e-testing-plans/`
 
-## Testing Framework Strategy
-
-This project uses **three complementary testing approaches**:
-
-### 1. API Tests (curl/bash scripts)
-- **Purpose**: Quick smoke testing of endpoints, response formats, permission checks
-- **Location**: Inline bash commands in test plan document
-- **Run command**: Copy-paste individual commands
-- **Environment**: Command line (requires valid session cookies for auth endpoints)
-- **Speed**: Very fast (~1 second per command)
-- **Use for**: Endpoint availability, data structure validation, authentication/authorization checks
-
-### 2. Jest (Unit & Integration Tests)
-- **Purpose**: Backend logic, utility functions, database operations, permission checks
-- **Location**: `lib/__tests__/**/*.test.ts` (e.g., `lib/__tests__/auth.test.ts`)
-- **Run command**: `npm test`
-- **Environment**: Node.js (no browser)
-- **Speed**: Fast (~300-500ms for typical test suite)
-- **Use for**: Pure functions, API handler logic, database queries, permission functions
-- **Isolation**: Jest ignores `tests/` directory via `jest.config.js` `testPathIgnorePatterns`
-
-### 3. Playwright (E2E UI Tests)
-- **Purpose**: Full user workflows, browser interactions, visual verification, session persistence
-- **Location**: `tests/**/*.spec.ts` or `tests/**/*.spec.js`
-- **Run command**: `npx playwright test <feature-name>`
-- **Environment**: Real browser (Chromium/Firefox/Safari)
-- **Speed**: Slower (~2-10 minutes depending on OAuth flows)
-- **Use for**: User flows, UI interactions, visual regression, protected route testing
-- **Isolation**: Playwright tests ignored by Jest via `testPathIgnorePatterns`
-
-**IMPORTANT**: Jest and Playwright are **completely separate**. Never run Playwright tests with `npm test`.
-
-### When to Use Each Framework
-
-| Testing Need | Framework | Example |
-|--------------|-----------|---------|
-| Pure function logic | Jest | `getProjectAccess()`, `formatCompassSection()` |
-| API endpoint response format | API Tests (curl) | `GET /api/project/{id}/tree` returns valid JSON |
-| Database query results | Jest | `prisma.project.findUnique()` returns expected fields |
-| Permission enforcement | Jest + API Tests | `requireAuth()` throws 401, `isProjectOwner()` returns boolean |
-| Button click triggers action | Playwright | Clicking "Sign In" redirects to OAuth |
-| Form submission flow | Playwright | Fill form → Submit → Verify success message |
-| OAuth authentication | Playwright | Complete Google OAuth flow → Session persisted |
-| Visual regression | Playwright | Screenshot comparison before/after |
-
----
-
 ## Test Plan Structure
 
 The test plan MUST follow this exact structure and be saved as `e2e-testing-plans/<feature-name>-e2e-plan.md`:
@@ -76,57 +29,12 @@ The test plan MUST follow this exact structure and be saved as `e2e-testing-plan
 ## Overview
 [2-3 sentence description of what this feature does and why testing it matters]
 
-**Critical Testing Focus:**
-- [Key concern 1: e.g., "OAuth flow completes successfully"]
-- [Key concern 2: e.g., "Permission system enforces correct access levels"]
-- [Key concern 3: e.g., "Streaming responses display correctly"]
-
 ## Test Environment
-- **Application URL**: [e.g., http://localhost:3009]
-- **API Base URL**: [e.g., http://localhost:3009/api]
-- **Database**: [e.g., PostgreSQL (Neon) via DATABASE_URL]
+- **Application URL**: [e.g., http://localhost:3006]
+- **API Base URL**: [e.g., http://localhost:3006/api]
+- **Database**: [e.g., PostgreSQL via DATABASE_URL]
 - **Browser**: [e.g., Latest Chrome/Firefox]
-- **Prerequisites**:
-  - [e.g., Database seeded with test data]
-  - [e.g., Environment variables configured (OPENAI_API_KEY, SUPABASE_URL)]
-  - [e.g., Dev server running on port 3009]
-
----
-
-## Testing Framework Overview
-
-This project uses **two separate testing frameworks** plus API smoke tests for different purposes:
-
-### API Tests (curl/bash scripts)
-- **Purpose**: Quick smoke testing of [specific endpoints this feature uses]
-- **Location**: Inline bash commands in this document
-- **Run command**: Copy-paste individual commands
-- **Environment**: Command line (requires [specific prerequisites])
-- **Speed**: Very fast (~1 second per command)
-- **Use for**: [List 2-3 specific use cases for this feature]
-
-### Jest (Unit & Integration Tests)
-- **Purpose**: [Describe backend logic specific to this feature]
-- **Location**: `lib/__tests__/<feature-name>.test.ts`
-- **Run command**: `npm test`
-- **Environment**: Node.js (no browser)
-- **Speed**: Fast (~[estimate]ms for this feature's suite)
-- **Use for**: [List 2-3 functions/utilities to unit test]
-
-### Playwright (E2E UI Tests)
-- **Purpose**: [Describe user workflows specific to this feature]
-- **Location**: `tests/<feature-name>.spec.ts`
-- **Run command**: `npx playwright test <feature-name>`
-- **Environment**: Real browser (Chromium/Firefox/Safari)
-- **Speed**: [Estimate: e.g., "~5 minutes for full suite"]
-- **Use for**: [List 2-3 UI flows to test]
-
-**Important**: Jest and Playwright are isolated via `jest.config.js` `testPathIgnorePatterns`. Never run Playwright tests with `npm test`.
-
-**Testing Approach for This Plan**:
-- **API tests** (Phase 1): [Brief description of API endpoints to test]
-- **Playwright tests** (Phases 2-4): [Brief description of UI flows to test]
-- **Jest tests** (separate file): [Brief description of unit tests to create]
+- **Prerequisites**: [e.g., Scraper must have run at least once]
 
 ---
 
@@ -141,7 +49,7 @@ Verify frontend correctly displays data from API responses.
 ### Phase 3: User Flow Validation
 Test complete user workflows and interactions.
 
-### Phase 4: Error Handling & Edge Cases
+### Phase 4: Error Handling
 Verify graceful degradation and error states.
 
 ---

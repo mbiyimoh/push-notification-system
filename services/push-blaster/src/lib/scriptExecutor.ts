@@ -85,8 +85,20 @@ export class ScriptExecutor {
   constructor() {
     // Railway-compatible relative paths using process.cwd()
     const projectRoot = process.cwd();
-    // Navigate up from apps/push-blaster to main-ai-apps, then to projects
-    this.scriptsDirectory = path.join(projectRoot, '..', '..', 'projects', 'push-automation', 'audience-generation-scripts');
+
+    // Check for scripts in local directory first (Railway/Docker deployment)
+    // Then fall back to monorepo path (local development)
+    const localScriptsDir = path.join(projectRoot, 'audience-generation-scripts');
+    const monorepoScriptsDir = path.join(projectRoot, '..', '..', 'projects', 'push-automation', 'audience-generation-scripts');
+
+    if (fs.existsSync(localScriptsDir)) {
+      this.scriptsDirectory = localScriptsDir;
+      this.log(`Using local scripts directory: ${localScriptsDir}`);
+    } else {
+      this.scriptsDirectory = monorepoScriptsDir;
+      this.log(`Using monorepo scripts directory: ${monorepoScriptsDir}`);
+    }
+
     this.outputDirectory = path.join(projectRoot, '.script-outputs');
 
     // Ensure output directory exists
@@ -203,8 +215,12 @@ export class ScriptExecutor {
       
       console.log(`[SCRIPTEXECUTOR] Calling runPython with args: ${JSON.stringify(args)}`);
       
+      // Use PYTHON_PATH env var or detect location (Alpine: /usr/bin/python3, macOS: /usr/local/bin/python3)
+      const pythonPath = process.env.PYTHON_PATH ||
+        (fs.existsSync('/usr/bin/python3') ? '/usr/bin/python3' : '/usr/local/bin/python3');
+
       const debugResult = await runPython({
-        pythonPath: '/usr/local/bin/python3',
+        pythonPath,
         scriptPath: script.scriptPath,
         args,
         env: scriptEnv,

@@ -1,0 +1,99 @@
+{
+  "id": "358676a1-8aa8-405d-9332-580b49e30421",
+  "name": "Daily Layer 3 Pushes",
+  "description": "Script-based automation using Generate Layer 3 Push Csvs",
+  "type": "script_based",
+  "status": "active",
+  "isActive": true,
+  "schedule": {
+    "timezone": "America/Chicago",
+    "frequency": "daily",
+    "startDate": "2025-08-12",
+    "executionTime": "13:00",
+    "leadTimeMinutes": 30
+  },
+  "template": {
+    "name": "Script-Based Automation",
+    "category": "custom",
+    "isSystemTemplate": false,
+    "config": {}
+  },
+  "pushSequence": [
+    {
+      "sequenceOrder": 1,
+      "title": "🎯 The target: [[var:product_name]]s 👟",
+      "body": "We saw the offer you made — why not shoot a few more shots?\n\nSee the [[var:inventory_count]] people who have them →",
+      "deepLink": "https://tradeblock.us/product/collectors-have?productVariantId=[[var:variantID]]&conditionId=1d7b7572-bb87-44b4-8a99-81ddb8e5b692",
+      "layerId": 3,
+      "audienceName": "default",
+      "timing": {
+        "delayAfterPrevious": 0
+      },
+      "status": "pending",
+      "id": "",
+      "automationId": "358676a1-8aa8-405d-9332-580b49e30421"
+    },
+    {
+      "sequenceOrder": 2,
+      "title": "📈 [[var:wishlist_count]] people want your shoe",
+      "body": "Those [[var:product_name]]s you just added?\n\nThese people are after them. →",
+      "deepLink": "https://tradeblock.us/product/collectors-want?productVariantId=[[var:variantID]]&conditionId=1d7b7572-bb87-44b4-8a99-81ddb8e5b692",
+      "layerId": 3,
+      "audienceName": "default",
+      "timing": {
+        "delayAfterPrevious": 5
+      },
+      "status": "pending",
+      "id": "",
+      "automationId": "358676a1-8aa8-405d-9332-580b49e30421"
+    },
+    {
+      "sequenceOrder": 3,
+      "title": "👀 [[var:inventory_count]] people have that shoe you want",
+      "body": "Need those [[var:product_name]]s ASAP?\n\nIf so, these users are the 🔌 →",
+      "deepLink": "https://tradeblock.us/product/collectors-have?productVariantId=[[var:variantID]]&conditionId=1d7b7572-bb87-44b4-8a99-81ddb8e5b692",
+      "layerId": 3,
+      "audienceName": "default",
+      "timing": {
+        "delayAfterPrevious": 5
+      },
+      "status": "pending",
+      "id": "",
+      "automationId": "358676a1-8aa8-405d-9332-580b49e30421"
+    }
+  ],
+  "audienceCriteria": {
+    "trustedTraderStatus": "any",
+    "trustedTraderCandidate": "any",
+    "activityDays": 30,
+    "tradingDays": 30,
+    "dataPacks": [],
+    "customScript": {
+      "scriptId": "generate_layer_3_push_csvs",
+      "parameters": {}
+    }
+  },
+  "settings": {
+    "testUserIds": [],
+    "emergencyStopEnabled": true,
+    "dryRunFirst": true,
+    "cancellationWindowMinutes": 25,
+    "safeguards": {
+      "maxAudienceSize": 10000,
+      "requireTestFirst": true,
+      "emergencyContacts": [],
+      "alertThresholds": {
+        "audienceSize": 5000,
+        "failureRate": 0.1
+      }
+    }
+  },
+  "metadata": {
+    "createdBy": "api",
+    "totalExecutions": 0,
+    "successfulExecutions": 0,
+    "failedExecutions": 0
+  },
+  "createdAt": "2025-08-12T03:48:10.318Z",
+  "updatedAt": "2025-09-08T22:24:37.883Z"
+}
