@@ -312,7 +312,7 @@ src/app/api/
 │   │   ├── route.ts           # Run test push sequence
 │   │   ├── [id]/route.ts      # Test specific automation
 │   │   └── [id]/kill/route.ts # Kill running test execution
-│   ├── control/route.ts       # Cancel/pause/resume automation
+│   ├── control/route.ts       # Cancel/pause/resume/execute_now automation
 │   ├── monitor/route.ts       # Get execution status
 │   ├── audit/route.ts         # Execution history
 │   ├── debug/route.ts         # Debug info
@@ -348,20 +348,42 @@ src/lib/
 
 ### UI Components
 
+**3-Page Dashboard Structure:**
+
 ```
 src/app/
-├── page.tsx                   # Home page (push dashboard)
+├── page.tsx                      # Dashboard: Stats, upcoming, recent activity
+├── automations/
+│   ├── page.tsx                  # Automations List: Filterable list with actions
+│   └── [id]/
+│       ├── page.tsx              # Detail: Server component (data fetching)
+│       ├── AutomationDetailClient.tsx  # Detail: Client component (interactivity)
+│       └── not-found.tsx         # 404 handling
 ├── create-automation/
-│   └── page.tsx              # Create automation form
+│   └── page.tsx                  # Creation wizard (unchanged)
 ├── edit-automation/
-│   └── [id]/page.tsx         # Edit existing automation
+│   └── [id]/page.tsx             # Edit wizard (unchanged)
 ├── test-automation/
-│   └── [id]/page.tsx         # Manual test execution
+│   └── [id]/page.tsx             # Manual test execution
 └── components/
-    ├── Button.tsx
-    ├── Input.tsx
-    └── Textarea.tsx
+    ├── nav/
+    │   └── HeaderNav.tsx         # Breadcrumb navigation
+    ├── dashboard/
+    │   ├── StatsCard.tsx         # Live/Scheduled/Paused cards
+    │   ├── UpcomingExecutions.tsx # Next 5 runs
+    │   └── RecentActivity.tsx    # Last 5 executions
+    ├── automations/
+    │   ├── StatusBadge.tsx       # Status pills
+    │   └── AutomationCard.tsx    # List item with actions
+    └── detail/
+        └── ExecutionLogTable.tsx # Paginated execution history
 ```
+
+**Key UI Patterns:**
+- Server Components for initial data fetch (Dashboard, List, Detail pages)
+- Client Components for interactivity (filters, actions, dialogs)
+- HeaderNav rendered per-page with custom breadcrumbs
+- Consistent `bg-slate-50` background from layout
 
 ---
 
@@ -535,6 +557,39 @@ POST /api/send-push
 3. **Update audience processor**
 4. **Update database query**
 
+### Scenario 4: Running an Automation Immediately (Execute Now)
+
+**Goal:** Bypass the schedule and execute an automation right now (e.g., for testing or urgent pushes)
+
+**UI Method:**
+1. Navigate to automation detail page (`/automations/[id]`)
+2. Click **"Run Now"** button
+3. Confirm in dialog
+4. Automation executes immediately, bypassing schedule
+
+**API Method:**
+```bash
+curl -X POST http://localhost:3001/api/automation/control \
+  -H "Content-Type: application/json" \
+  -d '{
+    "automationId": "your-automation-id",
+    "action": "execute_now",
+    "reason": "Manual execution for testing"
+  }'
+```
+
+**How it works:**
+- Calls `automationEngine.executeAutomationNow(automation)`
+- Checks if automation is already running (prevents duplicates)
+- Executes full timeline immediately (audience generation → test → live)
+- Returns execution ID for monitoring
+
+**Gotchas:**
+- Does NOT respect the cron schedule - runs immediately
+- Still respects cadence rules (Layer 2/3/5 filtering)
+- Cannot run if automation is already executing
+- Execution history is logged normally
+
 ---
 
 ## Testing Strategy
@@ -611,19 +666,22 @@ npm run lint            # ESLint
 ### Key API Endpoints
 
 ```
-POST   /api/automation/recipes                  # Create automation
-GET    /api/automation/recipes                  # List automations
-GET    /api/automation/recipes/{id}             # Get automation
-PUT    /api/automation/recipes/{id}             # Update automation
-DELETE /api/automation/recipes/{id}             # Delete automation
+POST   /api/automation/recipes                          # Create automation
+GET    /api/automation/recipes                          # List automations
+GET    /api/automation/recipes/{id}                     # Get automation
+PUT    /api/automation/recipes/{id}                     # Update automation
+DELETE /api/automation/recipes/{id}                     # Delete automation
 
-GET    /api/automation/test/{id}                # Run test sequence
-POST   /api/automation/control                  # Cancel/pause/resume
-GET    /api/automation/monitor                  # Execution status
-GET    /api/automation/debug                    # Debug info
+GET    /api/automation/{id}/history                     # Paginated execution history
+GET    /api/automation/{id}/executions/{execId}/export  # CSV export
 
-POST   /api/send-push                           # Send single push
-GET    /api/health                              # Service health
+GET    /api/automation/test/{id}                        # Run test sequence
+POST   /api/automation/control                          # Cancel/pause/resume
+GET    /api/automation/monitor                          # Execution status
+GET    /api/automation/debug                            # Debug info
+
+POST   /api/send-push                                   # Send single push
+GET    /api/health                                      # Service health
 ```
 
 ### Critical Configuration Values
@@ -681,6 +739,240 @@ NODE_ENV=production|development
 
 ---
 
+## UI Components & Features
+
+### Execution Drill-Down & History
+
+**What it does:** Provides detailed execution analysis with cadence exclusion breakdown, phase-by-phase timing, and CSV export capabilities.
+
+**Key files:**
+- `src/app/automations/[id]/executions/[execId]/page.tsx` - Execution detail page (Server Component)
+- `src/app/components/detail/ExecutionDrilldown.tsx` - Main drill-down UI (Client Component)
+- `src/app/components/detail/PhaseBreakdown.tsx` - Expandable execution phases
+- `src/app/components/detail/CadenceBreakdown.tsx` - Visual exclusion reason breakdown
+- `src/app/api/automation/[id]/history/route.ts` - Paginated history API
+- `src/lib/csvExporter.ts` - CSV export with injection character escaping
+
+**Integration points:**
+- Fetches automation via `automationStorage.loadAutomation(id)`
+- Loads execution logs via `automationLogger.loadExecutionHistory(id, limit)`
+- Exclusion breakdown comes from `execution.phases` array, specifically the `cadence_filtering` phase data
+
+**API Usage:**
+```typescript
+// History API with pagination
+GET /api/automation/{id}/history?page=1&limit=20&status=completed&sortBy=date&sortOrder=desc
+
+// CSV Export
+GET /api/automation/{id}/executions/{execId}/export?include=all
+```
+
+**Gotchas:**
+- ExecutionLog type includes `'cancelled'` status - don't forget to handle it in UI components
+- The `exclusionBreakdown` is nested in `phases[].data.exclusionBreakdown`, not at the root level
+- Use `execution.phases` not `execution.phaseLogs` (field name changed in automationLogger)
+- Push log fields are `pushTitle` (not `title`), `failureCount` (not `failedCount`), `sentCount`, `audienceSize`
+- CSV export escapes injection characters (=, +, -, @, \t, \r) with leading single quote
+
+**Extending this:**
+- To add new exclusion reasons: Update `ExclusionBreakdown` interface in cadence service (`push-cadence-service/src/lib/cadence.ts`)
+- To customize CSV format: Modify `exportExecutionToCsv()` in `src/lib/csvExporter.ts`
+- To add new phase types: Update `phaseLabels` map in `PhaseBreakdown.tsx`
+
+### Keyboard Shortcuts System
+
+**What it does:** Provides vim-style navigation and power-user shortcuts across the UI.
+
+**Key files:**
+- `src/app/hooks/useKeyboardShortcuts.ts` - Reusable keyboard shortcut hook
+- `src/app/components/ui/ShortcutsHelpModal.tsx` - Help modal (Cmd/Ctrl + /)
+- `src/app/components/detail/ExecutionLogTable.tsx` - J/K list navigation implementation
+- `src/app/automations/[id]/AutomationDetailClient.tsx` - Detail page shortcuts
+
+**Available shortcuts:**
+| Shortcut | Context | Action |
+|----------|---------|--------|
+| `⌘/Ctrl + Enter` | Automation detail | Run Now |
+| `⌘/Ctrl + P` | Automation detail | Pause/Resume |
+| `⌘/Ctrl + E` | Automation detail | Edit automation |
+| `⌘/Ctrl + /` | Global | Show shortcuts help |
+| `Escape` | Global | Close dialogs |
+| `J` | Execution list | Move selection down |
+| `K` | Execution list | Move selection up |
+| `Enter` | Execution list | Open selected execution |
+
+**Integration pattern:**
+```typescript
+import { useKeyboardShortcuts } from '@/app/hooks/useKeyboardShortcuts';
+
+useKeyboardShortcuts([
+  {
+    key: 'Enter',
+    meta: true,
+    action: () => handleRunNow(),
+    description: 'Run now'
+  },
+  // ... more shortcuts
+]);
+```
+
+**Gotchas:**
+- Hook automatically ignores shortcuts when user is typing in INPUT/TEXTAREA/contentEditable
+- Hook allows Enter key on BUTTON and A (link) elements to work normally (prevents conflicts)
+- Use `meta: true` for Cmd/Ctrl (cross-platform) instead of separate `ctrl` flag
+- Platform-specific modifier symbol available via `getModifierSymbol()` (⌘ on Mac, Ctrl on Windows)
+- Don't use plain Enter without checking context - could interfere with form submissions
+
+**Extending this:**
+- To add shortcuts to a new page: Import hook, define shortcuts array, call `useKeyboardShortcuts(shortcuts)`
+- To update help modal: Edit `ShortcutsHelpModal.tsx` shortcuts arrays (detailPageShortcuts, globalShortcuts, navigationShortcuts)
+
+### Toast Notifications (Sonner)
+
+**What it does:** User feedback system replacing alert() calls with elegant toast notifications.
+
+**Key files:**
+- `src/app/layout.tsx` - Toaster component initialization
+- `package.json` - Sonner dependency
+
+**Usage patterns:**
+```typescript
+import { toast } from 'sonner';
+
+// Success
+toast.success('Automation paused');
+
+// Error with description
+toast.error('Failed to pause automation', {
+  description: error.message
+});
+
+// Info with long duration
+toast.info('Automation executing...', {
+  description: 'Checking for completion...',
+  duration: 60000,
+  id: 'execution-polling',
+});
+
+// Dismiss specific toast
+toast.dismiss('execution-polling');
+```
+
+**Configuration:**
+```typescript
+// In layout.tsx
+<Toaster
+  position="bottom-right"
+  toastOptions={{
+    duration: 4000,
+    className: 'font-sans',
+  }}
+/>
+```
+
+**Gotchas:**
+- Always provide an `id` for toasts you plan to dismiss programmatically
+- Use `description` field for detailed error messages, not the main message
+- Don't use alert() - it's been replaced everywhere with toast notifications
+- Toast positioning is bottom-right by default - matches modern UI conventions
+
+### Auto-Refresh After Run Now
+
+**What it does:** Automatically polls for execution completion and updates UI with results.
+
+**Key files:**
+- `src/app/automations/[id]/AutomationDetailClient.tsx` - Polling implementation in `handleRunNow()`
+
+**How it works:**
+1. User clicks "Run Now"
+2. API call to `/api/automation/control` with `action: 'execute_now'`
+3. Polling starts: every 5 seconds for max 60 seconds (12 polls)
+4. Fetches execution history via `/api/automation/monitor?type=executions`
+5. Checks if new execution appeared by comparing array length
+6. Shows success/error toast based on execution status
+7. Calls `router.refresh()` to update server components
+
+**Integration pattern:**
+```typescript
+// After successful API call
+toast.info('Automation executing...', {
+  duration: 60000,
+  id: 'execution-polling',
+});
+
+let pollCount = 0;
+const maxPolls = 12;
+const initialCount = executionHistory.length;
+
+const pollInterval = setInterval(async () => {
+  pollCount++;
+  const response = await fetch('/api/automation/monitor?type=executions');
+  const data = await response.json();
+
+  const filtered = data.data.executions
+    .filter(e => e.automationId === automationId)
+    .map(e => e.fullLog);
+
+  if (filtered.length > initialCount) {
+    clearInterval(pollInterval);
+    toast.dismiss('execution-polling');
+    // Show result toast
+  }
+
+  if (pollCount >= maxPolls) {
+    clearInterval(pollInterval);
+    toast.info('Execution may still be running');
+  }
+}, 5000);
+```
+
+**Gotchas:**
+- Don't poll indefinitely - use maxPolls to prevent resource leaks
+- Clear intervals on success or timeout
+- Dismiss the polling toast before showing result toast
+- Use `router.refresh()` to update server-rendered components
+- Handle the case where execution completes before first poll (unlikely but possible)
+
+### Cadence Service Exclusion Breakdown
+
+**What it does:** Tracks and reports why users were excluded from push delivery by cadence rules.
+
+**Key files:**
+- `services/push-cadence-service/src/lib/cadence.ts` - Exclusion tracking logic
+- `services/push-cadence-service/src/app/api/filter-audience/route.ts` - API response
+- `services/push-blaster/src/lib/automationIntegration.ts` - Integration point
+- `src/app/components/detail/CadenceBreakdown.tsx` - UI visualization
+
+**Exclusion categories:**
+```typescript
+interface ExclusionBreakdown {
+  l3Cooldown: number;        // Layer 3: 72-hour cooldown violations
+  l2l3WeeklyLimit: number;   // Combined L2/L3: >3/week limit
+  l5Cooldown: number;        // Layer 5: 96-hour cooldown violations
+  invalidUuid: number;       // Malformed user IDs
+}
+```
+
+**Integration flow:**
+1. push-blaster calls `/api/filter-audience` with userIds and layerId
+2. Cadence service tracks exclusions during filtering
+3. Returns `{ eligibleUserIds, excludedCount, exclusionBreakdown }`
+4. push-blaster stores breakdown in execution phase data
+5. UI reads from `execution.phases.find(p => p.phase === 'cadence_filtering').data.exclusionBreakdown`
+
+**Gotchas:**
+- Layer 1 (platform-wide) bypasses all cadence rules - returns zeros for all breakdown fields
+- Invalid UUIDs are filtered before rules check - tracked separately
+- The breakdown sums may not equal totalExcluded if multiple rules exclude same user (set-based logic)
+- Breakdown is stored in phase data, not at execution root level
+- Always check if breakdown exists before rendering - Layer 1 executions won't have it
+
+**Extending this:**
+- To add new exclusion reason: Update `ExclusionBreakdown` interface, add tracking in `filterUsersByCadence()`, update UI colors in `CadenceBreakdown.tsx`
+- To change cooldown periods: Modify SQL queries in cadence.ts (L3: 72 hours, L5: 96 hours, L2/L3: 7 days)
+
+---
+
 ## Troubleshooting Guide
 
 ### Issue: Automations Not Scheduling on Restart
@@ -706,6 +998,6 @@ echo "$FIREBASE_PRIVATE_KEY" | head -5
 
 ---
 
-**Last Updated:** 2025-11-24
+**Last Updated:** 2025-11-25
 **Service Version:** 0.1.0
 **Next.js:** 15.3.5

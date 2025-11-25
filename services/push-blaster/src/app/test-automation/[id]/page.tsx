@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { Button } from '@/components/Button';
+import { toast } from 'sonner';
 
 interface Automation {
   id: string;
@@ -324,7 +325,9 @@ export default function TestAutomationPage() {
   const scheduleTest = async () => {
     console.log('[UI] scheduleTest function triggered.');
     if (!automation || !scheduledDate || !scheduledTime) {
-      alert('Please select both date and time for scheduling.');
+      toast.error('Missing schedule', {
+        description: 'Please select both date and time for scheduling.',
+      });
       console.error('[UI] Missing automation, date, or time.');
       return;
     }
@@ -334,7 +337,9 @@ export default function TestAutomationPage() {
     const now = new Date();
     
     if (scheduledDateTime <= now) {
-      alert('Scheduled time must be in the future.');
+      toast.error('Invalid time', {
+        description: 'Scheduled time must be in the future.',
+      });
       return;
     }
 
@@ -349,7 +354,9 @@ export default function TestAutomationPage() {
         minute: '2-digit',
         hour12: true
       });
-      alert(`Test automation requires at least ${minimumLeadTime} minutes lead time. Please schedule for ${formattedEarliestTime} CST or later.`);
+      toast.error('Insufficient lead time', {
+        description: `Test automation requires at least ${minimumLeadTime} minutes lead time. Please schedule for ${formattedEarliestTime} CST or later.`,
+      });
       return;
     }
 

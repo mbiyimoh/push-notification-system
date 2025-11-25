@@ -46,6 +46,16 @@ interface PushContent {
   sequenceOrder: number;
 }
 
+// Raw push data from API response (extends AutomationPush with audienceName)
+interface RawPushData {
+  audienceName?: string;
+  title: string;
+  body: string;
+  deepLink?: string;
+  layerId: number;
+  sequenceOrder: number;
+}
+
 export default function EditAutomationPage() {
   const router = useRouter();
   const params = useParams();
@@ -71,8 +81,8 @@ export default function EditAutomationPage() {
   const [editPushContents, setEditPushContents] = useState<PushContent[]>([]);
 
   // Enrich push contents with script audience data
-  const enrichPushContentsWithScriptData = (pushSequence: any[], scriptData: AvailableScript | null) => {
-    return pushSequence.map((push: any, index: number) => {
+  const enrichPushContentsWithScriptData = (pushSequence: RawPushData[], scriptData: AvailableScript | null) => {
+    return pushSequence.map((push: RawPushData, index: number) => {
       const audienceName = push.audienceName || 'default';
       let audienceDescription = 'Default audience';
       
@@ -121,7 +131,7 @@ export default function EditAutomationPage() {
         });
         
         // Initialize push contents - will be enriched once scripts are loaded
-        const basicPushContents = auto.pushSequence.map((push: any) => ({
+        const basicPushContents = auto.pushSequence.map((push: RawPushData) => ({
           audienceName: push.audienceName || 'default',
           audienceDescription: push.audienceName ? `Audience: ${push.audienceName}` : 'Default audience',
           title: push.title,
@@ -189,7 +199,7 @@ export default function EditAutomationPage() {
   const updatePushContent = (field: keyof PushContent, value: string | number) => {
     const newContents = [...editPushContents];
     if (newContents[currentPushIndex]) {
-      (newContents[currentPushIndex] as any)[field] = value;
+      newContents[currentPushIndex] = { ...newContents[currentPushIndex], [field]: value };
       setEditPushContents(newContents);
     }
   };
@@ -271,10 +281,11 @@ export default function EditAutomationPage() {
           message: result.message || 'Failed to update automation'
         });
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Failed to update automation';
       setResponse({
         success: false,
-        message: error.message || 'Failed to update automation'
+        message: errorMessage
       });
     } finally {
       setSaving(false);
@@ -282,7 +293,7 @@ export default function EditAutomationPage() {
   };
 
   const handleCancel = () => {
-    router.push('/');
+    router.push(`/automations/${automationId}`);
   };
 
   if (loading) {

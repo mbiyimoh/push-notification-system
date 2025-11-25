@@ -63,3 +63,7 @@ coverage/
 # PM2
 pm2*.log
 ecosystem.config.js.lock
+
+# Simple Task Master - User tasks are git-ignored
+.simple-task-master/tasks/
+.simple-task-master/lock

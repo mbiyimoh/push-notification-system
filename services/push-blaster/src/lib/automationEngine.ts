@@ -1071,6 +1071,36 @@ export class AutomationEngine {
     return this.cancelAutomation(automationId, 'Emergency stop activated');
   }
 
+  async executeAutomationNow(automation: UniversalAutomation): Promise<{ success: boolean; message: string; executionId?: string }> {
+    try {
+      this.log(`Executing automation immediately: ${automation.name} (${automation.id})`);
+
+      // Check if automation is already running
+      if (this.isExecutionActive(automation.id)) {
+        return {
+          success: false,
+          message: 'Automation is already running'
+        };
+      }
+
+      // Execute the automation
+      await this.executeAutomation(automation.id);
+
+      return {
+        success: true,
+        message: 'Automation execution started successfully',
+        executionId: automation.id
+      };
+    } catch (error: unknown) {
+      this.logError('Failed to execute automation immediately', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      return {
+        success: false,
+        message: `Failed to execute automation: ${errorMessage}`
+      };
+    }
+  }
+
   async unscheduleAutomation(automationId: string): Promise<{ success: boolean; message: string }> {
     // Unschedule automation when it becomes inactive
     const jobInfo = this.scheduledJobs.get(automationId);

@@ -97,13 +97,14 @@ export class AutomationIntegration {
         };
       }
 
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       this.logError('Audience generation failed', error);
       automationLogger.logError(automation.id, 'audience_generation', 'Failed to generate audience', error);
       return {
         success: false,
         audienceSize: 0,
-        error: error.message
+        error: errorMessage
       };
     }
   }
@@ -115,6 +116,12 @@ export class AutomationIntegration {
     success: boolean;
     eligibleUserIds: string[];
     excludedCount: number;
+    exclusionBreakdown?: {
+      l3Cooldown: number;
+      l2l3WeeklyLimit: number;
+      l5Cooldown: number;
+      invalidUuid: number;
+    };
     error?: string;
   }> {
     try {
@@ -141,30 +148,33 @@ export class AutomationIntegration {
         'audience_filtering',
         'cadence_filter',
         startTime,
-        { 
+        {
           originalSize: userIds.length,
           filteredSize: result.eligibleUserIds?.length || 0,
-          excludedCount: result.excludedCount || 0
+          excludedCount: result.excludedCount || 0,
+          exclusionBreakdown: result.exclusionBreakdown
         }
       );
 
       return {
         success: true,
         eligibleUserIds: result.eligibleUserIds || [],
-        excludedCount: result.excludedCount || 0
+        excludedCount: result.excludedCount || 0,
+        exclusionBreakdown: result.exclusionBreakdown
       };
 
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       automationLogger.logError(automation.id, 'audience_filtering', 'Cadence filtering failed', error);
-      
+
       // Fail open - return original audience if cadence service is down
       automationLogger.log('warn', automation.id, 'audience_filtering', 'Cadence service unavailable, proceeding without filtering');
-      
+
       return {
         success: true,
         eligibleUserIds: userIds,
         excludedCount: 0,
-        error: `Cadence service unavailable: ${error.message}`
+        error: `Cadence service unavailable: ${errorMessage}`
       };
     }
   }
@@ -238,7 +248,8 @@ export class AutomationIntegration {
         jobId: result.jobId
       };
 
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       automationLogger.logError(automation.id, 'push_sending', 'Push sending failed', error, {
         pushId: push.id,
         isDryRun
@@ -248,7 +259,7 @@ export class AutomationIntegration {
         success: false,
         sentCount: 0,
         failureCount: userIds.length,
-        error: error.message
+        error: errorMessage
       };
     }
   }
@@ -285,7 +296,7 @@ export class AutomationIntegration {
         userCount: userIds.length
       });
 
-    } catch (error: any) {
+    } catch (error: unknown) {
       automationLogger.logError(automation.id, 'tracking', 'Notification tracking failed', error);
       // Don't fail the push if tracking fails
     }
@@ -294,7 +305,7 @@ export class AutomationIntegration {
   /**
    * Load existing scheduled pushes for migration
    */
-  async loadScheduledPushes(): Promise<any[]> {
+  async loadScheduledPushes(): Promise<unknown[]> {
     try {
       const response = await fetch(`${this.pushBlasterApiUrl}/api/scheduled-pushes`, {
         method: 'GET',
@@ -308,8 +319,9 @@ export class AutomationIntegration {
       const result = await response.json();
       return result.data || [];
 
-    } catch (error: any) {
-      this.log(`Failed to load scheduled pushes: ${error.message}`);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.log(`Failed to load scheduled pushes: ${errorMessage}`);
       return [];
     }
   }
@@ -317,7 +329,7 @@ export class AutomationIntegration {
   /**
    * Get push logs for tracking integration
    */
-  async getPushLogs(limit: number = 50): Promise<any[]> {
+  async getPushLogs(limit: number = 50): Promise<unknown[]> {
     try {
       const response = await fetch(`${this.pushBlasterApiUrl}/api/push-logs?limit=${limit}`, {
         method: 'GET',
@@ -331,8 +343,9 @@ export class AutomationIntegration {
       const result = await response.json();
       return result.data || [];
 
-    } catch (error: any) {
-      this.log(`Failed to load push logs: ${error.message}`);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.log(`Failed to load push logs: ${errorMessage}`);
       return [];
     }
   }
@@ -340,7 +353,7 @@ export class AutomationIntegration {
   /**
    * Utility methods
    */
-  private createCsvContent(data: any[]): string {
+  private createCsvContent(data: Array<Record<string, string>>): string {
     if (data.length === 0) return 'user_id\n';
     
     const headers = Object.keys(data[0]);
@@ -368,8 +381,9 @@ export class AutomationIntegration {
     try {
       const response = await fetch(`${this.pushBlasterApiUrl}/api/push-logs?limit=1`);
       pushBlasterHealthy = response.ok;
-    } catch (error: any) {
-      errors.push(`Push-blaster unavailable: ${error.message}`);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      errors.push(`Push-blaster unavailable: ${errorMessage}`);
     }
 
     // Check cadence service health
@@ -380,8 +394,9 @@ export class AutomationIntegration {
         body: JSON.stringify({ userIds: [], layerId: 1 })
       });
       cadenceServiceHealthy = response.ok;
-    } catch (error: any) {
-      errors.push(`Cadence service unavailable: ${error.message}`);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      errors.push(`Cadence service unavailable: ${errorMessage}`);
     }
 
     return {
@@ -395,7 +410,7 @@ export class AutomationIntegration {
     console.log(`${this.logPrefix} ${new Date().toISOString()} - ${message}`);
   }
 
-  private logError(message: string, error: any): void {
+  private logError(message: string, error: unknown): void {
     console.error(`${this.logPrefix} ${new Date().toISOString()} - ${message}:`, error);
   }
 }

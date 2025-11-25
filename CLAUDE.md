@@ -12,9 +12,24 @@ A push notification system for Tradeblock consisting of two services deployed to
 
 Comprehensive documentation available in `developer-guides/`:
 - **push-notification-system-guide.md** - Overall system architecture and flows
-- **push-blaster-guide.md** - Automation engine, API routes, Firebase integration
+- **push-blaster-guide.md** - Automation engine, API routes, Firebase integration, **UI components & keyboard shortcuts**
 - **push-cadence-service-guide.md** - Cadence rules, database schema, filtering logic
 - **railway-deployment-guide.md** - Deployment configuration, troubleshooting
+
+### Recent UI Enhancements (Nov 2025)
+
+**Execution Drill-Down:** Detailed execution analysis with cadence exclusion breakdown, phase timing, and CSV export at `/automations/[id]/executions/[execId]`
+
+**Keyboard Shortcuts:** Vim-style navigation (J/K), power-user shortcuts (Cmd+Enter for Run, Cmd+P for Pause, Cmd+/ for help). See `src/app/hooks/useKeyboardShortcuts.ts`
+
+**Toast Notifications:** Replaced all alert() calls with Sonner toasts for better UX
+
+**Key Gotchas:**
+- ExecutionLog status includes `'cancelled'` - handle in UI
+- ExclusionBreakdown is nested in `phases[].data.exclusionBreakdown`
+- Use `execution.phases` not `execution.phaseLogs`
+- CSV export auto-escapes injection characters (=, +, -, @)
+- Keyboard hook allows Enter on buttons/links to prevent conflicts
 
 ## Infrastructure
 
@@ -98,3 +113,60 @@ Note: Environment variable changes in Railway trigger redeployment from git repo
 - **AutomationStorage**: File-based JSON at `/app/.automations/`
 - **Firebase Admin SDK**: Push delivery via FCM
 - **ScriptExecutor**: Python script runner for audience generation
+
+## UI Architecture (push-blaster)
+
+### Page Structure
+
+The UI is organized as a 3-page automation dashboard:
+
+| Page | Route | Purpose | Key Features |
+|------|-------|---------|--------------|
+| **Dashboard** | `/` | Automation health overview | Stats cards (live/scheduled/paused), upcoming executions, recent activity |
+| **Automations List** | `/automations` | Browse and manage automations | Status/frequency filters, search, pause/resume/delete actions |
+| **Automation Detail** | `/automations/[id]` | View config and execution history | Overview panels, push sequences, execution logs, **Run Now** button |
+
+### Component Organization
+
+```
+src/app/components/
+├── nav/
+│   └── HeaderNav.tsx           # Breadcrumb navigation with "New Automation" CTA
+├── dashboard/
+│   ├── StatsCard.tsx           # Color-coded stat cards (live=green, scheduled=blue, paused=yellow)
+│   ├── UpcomingExecutions.tsx  # Next 5 scheduled runs sorted by time
+│   └── RecentActivity.tsx      # Last 5 executions with metrics
+├── automations/
+│   ├── StatusBadge.tsx         # Status indicator pills
+│   └── AutomationCard.tsx      # List view card with inline actions
+└── detail/
+    └── ExecutionLogTable.tsx   # Paginated execution history table
+```
+
+### Key Integration Points
+
+**Data Fetching:**
+- Dashboard: `GET /api/automation/recipes` + `GET /api/automation/monitor?type=executions&limit=5`
+- List: `GET /api/automation/recipes` (with optional status/frequency filters)
+- Detail: `GET /api/automation/recipes/[id]` + `automationStorage.loadExecutionLogs(id)`
+
+**Control Actions:**
+- Pause/Resume: `POST /api/automation/control` with `action: 'pause'|'resume'`
+- **Run Now**: `POST /api/automation/control` with `action: 'execute_now'` (bypasses schedule, runs immediately)
+- Delete: `DELETE /api/automation/recipes/[id]`
+
+### Navigation Patterns
+
+- **Dashboard** → Click automation → Detail page
+- **List** → Click "View" → Detail page
+- **List** → Click "Edit" → Edit wizard (`/edit-automation/[id]`)
+- **Detail** → Click "Edit" → Edit wizard
+- **Edit wizard** → Cancel → Returns to automation detail page (NOT dashboard)
+- **Create wizard** → Cancel → Returns to dashboard
+
+### Layout Notes
+
+- `src/app/layout.tsx` provides `bg-slate-50` background, no global header
+- `HeaderNav` is rendered per-page with page-specific breadcrumbs
+- Server Components for data fetching, Client Components for interactivity
+- All pages use Next.js 15 App Router pattern

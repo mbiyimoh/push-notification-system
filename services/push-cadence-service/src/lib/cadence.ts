@@ -6,6 +6,19 @@ interface CadenceRule {
     value_count?: number;
 }
 
+interface ExclusionBreakdown {
+    l3Cooldown: number;        // Layer 3: 72-hour cooldown
+    l2l3WeeklyLimit: number;   // Combined L2/L3: max 3/week
+    l5Cooldown: number;        // Layer 5: 96-hour cooldown
+    invalidUuid: number;       // Invalid UUID format
+}
+
+export interface FilterResult {
+    eligibleUserIds: string[];
+    excludedCount: number;
+    exclusionBreakdown: ExclusionBreakdown;
+}
+
 /**
  * Helper function to get database pool with null safety
  * Throws error if pool is not initialized (DATABASE_URL not configured)
@@ -31,12 +44,20 @@ export const getCadenceRules = async (): Promise<Map<string, CadenceRule>> => {
     return rules;
 };
 
-export const filterUsersByCadence = async (userIds: string[], layerId: number): Promise<{ eligibleUserIds: string[], excludedCount: number }> => {
+export const filterUsersByCadence = async (userIds: string[], layerId: number): Promise<FilterResult> => {
     console.log(`[CADENCE] Starting cadence filtering for ${userIds.length} users, layerId: ${layerId}`);
-    
+
+    // Initialize exclusion breakdown
+    const exclusionBreakdown: ExclusionBreakdown = {
+        l3Cooldown: 0,
+        l2l3WeeklyLimit: 0,
+        l5Cooldown: 0,
+        invalidUuid: 0,
+    };
+
     if (layerId === 1) {
         console.log(`[CADENCE] Layer 1 detected - bypassing cadence rules`);
-        return { eligibleUserIds: userIds, excludedCount: 0 };
+        return { eligibleUserIds: userIds, excludedCount: 0, exclusionBreakdown };
     }
 
     // Validate and filter UUIDs
@@ -48,12 +69,15 @@ export const filterUsersByCadence = async (userIds: string[], layerId: number): 
         return isValid;
     });
 
+    // Track invalid UUIDs
+    exclusionBreakdown.invalidUuid = userIds.length - validUserIds.length;
+
     if (validUserIds.length === 0) {
         console.warn(`[CADENCE] No valid UUIDs found in userIds array, returning empty results`);
-        return { eligibleUserIds: [], excludedCount: 0 };
+        return { eligibleUserIds: [], excludedCount: exclusionBreakdown.invalidUuid, exclusionBreakdown };
     }
 
-    console.log(`[CADENCE] Filtered to ${validUserIds.length} valid UUIDs (${userIds.length - validUserIds.length} invalid excluded)`);
+    console.log(`[CADENCE] Filtered to ${validUserIds.length} valid UUIDs (${exclusionBreakdown.invalidUuid} invalid excluded)`);
 
     const rules = await getCadenceRules();
     const l5CooldownRule = rules.get('layer_5_cooldown_hours');
@@ -62,7 +86,7 @@ export const filterUsersByCadence = async (userIds: string[], layerId: number): 
 
     if (!l3CooldownRule || !combinedLimitRule) {
         console.error(`[CADENCE] Cadence rules not found in database. Missing: ${!l3CooldownRule ? 'layer_3_cooldown_hours' : ''} ${!combinedLimitRule ? 'combined_l2_l3_limit_hours' : ''}. Failing open.`);
-        return { eligibleUserIds: validUserIds, excludedCount: 0 };
+        return { eligibleUserIds: validUserIds, excludedCount: exclusionBreakdown.invalidUuid, exclusionBreakdown };
     }
 
     const l5CooldownHours = l5CooldownRule?.value_in_hours || 96; // Default 96 hours if rule not found
@@ -85,6 +109,7 @@ export const filterUsersByCadence = async (userIds: string[], layerId: number): 
         `;
         const result = await getPool().query(query, [validUserIds]);
         result.rows.forEach(row => excludedUserIds.add(row.user_id));
+        exclusionBreakdown.l5Cooldown = result.rows.length;
         console.log(`[CADENCE] Layer 5 cooldown: excluded ${result.rows.length} users`);
     }
 
@@ -99,6 +124,7 @@ export const filterUsersByCadence = async (userIds: string[], layerId: number): 
         `;
         const result = await getPool().query(query, [validUserIds]);
         result.rows.forEach(row => excludedUserIds.add(row.user_id));
+        exclusionBreakdown.l3Cooldown = result.rows.length;
         console.log(`[CADENCE] Layer 3 cooldown: excluded ${result.rows.length} users`);
     }
 
@@ -116,16 +142,19 @@ export const filterUsersByCadence = async (userIds: string[], layerId: number): 
         `;
         const result = await getPool().query(query, [usersToCheckForCombinedLimit, combinedLimitCount]);
         result.rows.forEach(row => excludedUserIds.add(row.user_id));
+        exclusionBreakdown.l2l3WeeklyLimit = result.rows.length;
         console.log(`[CADENCE] Combined L2/L3 limit: excluded ${result.rows.length} users`);
     }
     
     const eligibleUserIds = validUserIds.filter(id => !excludedUserIds.has(id));
-    
+
     console.log(`[CADENCE] Filtering complete: ${eligibleUserIds.length} eligible, ${excludedUserIds.size} excluded`);
-    
+    console.log(`[CADENCE] Exclusion breakdown: L3=${exclusionBreakdown.l3Cooldown}, L2/L3=${exclusionBreakdown.l2l3WeeklyLimit}, L5=${exclusionBreakdown.l5Cooldown}, Invalid=${exclusionBreakdown.invalidUuid}`);
+
     return {
         eligibleUserIds,
-        excludedCount: excludedUserIds.size
+        excludedCount: excludedUserIds.size,
+        exclusionBreakdown
     };
 };
 

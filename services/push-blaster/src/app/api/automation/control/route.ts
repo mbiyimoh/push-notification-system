@@ -70,7 +70,7 @@ export async function POST(req: NextRequest) {
         // Update automation status back to scheduled/running
         automation.status = automation.metadata.lastExecutedAt ? 'scheduled' : 'draft';
         await automationStorage.saveAutomation(automation);
-        
+
         // Re-schedule if it was scheduled before
         if (automation.status === 'scheduled') {
           const scheduleResult = await automationEngine.scheduleAutomation(automation);
@@ -88,10 +88,35 @@ export async function POST(req: NextRequest) {
             message: 'Automation resumed to draft status'
           };
         }
-        automationLogger.log('info', automationId, 'control', 'Automation resumed', { 
+        automationLogger.log('info', automationId, 'control', 'Automation resumed', {
           reason: reason || 'Manual resume',
-          timestamp 
+          timestamp
         });
+        break;
+
+      case 'execute_now':
+        // Execute automation immediately
+        try {
+          const executeResult = await automationEngine.executeAutomationNow(automation);
+          result = {
+            success: executeResult.success,
+            executionId: executeResult.executionId || automationId,
+            status: 'running',
+            message: executeResult.message || 'Automation execution started'
+          };
+          automationLogger.log('info', automationId, 'control', 'Immediate execution triggered', {
+            reason: reason || 'Manual execution',
+            timestamp
+          });
+        } catch (error: unknown) {
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          result = {
+            success: false,
+            executionId: automationId,
+            status: automation.status,
+            message: `Failed to execute automation: ${errorMessage}`
+          };
+        }
         break;
 
       default:
@@ -113,12 +138,13 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(result);
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error controlling automation:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     return NextResponse.json({
       success: false,
       message: 'Failed to control automation',
-      errors: [error.message]
+      errors: [errorMessage]
     }, { status: 500 });
   }
 }
@@ -196,12 +222,13 @@ export async function GET(req: NextRequest) {
       message: 'Control status retrieved successfully'
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error getting automation control status:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     return NextResponse.json({
       success: false,
       message: 'Failed to get control status',
-      errors: [error.message]
+      errors: [errorMessage]
     }, { status: 500 });
   }
 }
