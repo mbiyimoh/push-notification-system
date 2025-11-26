@@ -1,5 +1,5 @@
 const REQUIRED_ENV_VARS = [
-  'DATABASE_URL'
+  'PUSH_CADENCE_DATABASE_URL'
 ] as const;
 
 let validationComplete = false;
