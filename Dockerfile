@@ -47,7 +47,13 @@ COPY --from=builder /app/audience-generation-scripts ./audience-generation-scrip
 
 # Create expected Python module structure for imports
 # Scripts import from: basic_capabilities.internal_db_queries_toolbox
-COPY --from=builder /app/shared/python-utilities ./basic_capabilities/internal_db_queries_toolbox
+RUN mkdir -p basic_capabilities/internal_db_queries_toolbox
+COPY --from=builder /app/shared/python-utilities/ ./basic_capabilities/internal_db_queries_toolbox/
+# Create __init__.py at package root to make it a valid Python package
+RUN touch basic_capabilities/__init__.py
+
+# Create tmp directory for Python debug output
+RUN mkdir -p /app/tmp
 
 # Expose port
 EXPOSE 3000
