@@ -1,6 +1,8 @@
 {
   "permissions": {
     "allow": [
+      "Bash(claudekit:*)",
+      "Bash(stm:*)",
       "Bash(export:*)",
       "Bash(python3:*)",
       "SlashCommand(/dev:cleanup)",
@@ -21,7 +23,8 @@
       "WebFetch(domain:slamgoods.com)",
       "WebFetch(domain:supabase.com)",
       "SlashCommand(/create-dev-guide:*)",
-      "WebFetch(domain:docs.railway.com)"
+      "WebFetch(domain:docs.railway.com)",
+      "SlashCommand(/docs:sync)"
     ],
     "deny": [],
     "ask": []

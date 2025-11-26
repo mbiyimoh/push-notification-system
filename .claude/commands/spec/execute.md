@@ -1,7 +1,7 @@
 ---
 description: Implement a validated specification by orchestrating concurrent agents
 category: validation
-allowed-tools: Task, Read, TodoWrite, Grep, Glob, Bash(claudekit:status stm), Bash(stm:*), Bash(jq:*)
+allowed-tools: Task, Read, TodoWrite, Grep, Glob, Bash(claudekit:*), Bash(stm:*), Bash(jq:*)
 argument-hint: "<path-to-spec-file>"
 ---
 
