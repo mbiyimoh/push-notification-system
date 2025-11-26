@@ -464,9 +464,9 @@ export function AutomationDetailClient({
           PUSH SEQUENCES ({automation.pushSequence.length})
         </h2>
         <div className="space-y-3">
-          {automation.pushSequence.map((push) => (
+          {automation.pushSequence.map((push, index) => (
             <div
-              key={push.id}
+              key={push.id || `push-${index}-${push.sequenceOrder}`}
               className="flex items-start justify-between p-4 bg-gray-50 rounded-md"
             >
               <div className="flex-1">
