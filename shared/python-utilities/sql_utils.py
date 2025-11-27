@@ -4,24 +4,47 @@ PostgreSQL Database Utilities.
 This script provides helper functions to connect to the PostgreSQL database
 and execute SQL queries using the credentials loaded from the config.
 """
+import sys
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from basic_capabilities.internal_db_queries_toolbox import config
+
+# Connection timeout in seconds - prevents indefinite hangs
+DB_CONNECT_TIMEOUT = 30
 
 def get_db_connection():
     """
     Establishes a connection to the PostgreSQL database.
 
-    Uses the DATABASE_URL from the config.
+    Uses the DATABASE_URL from the config with a connection timeout.
 
     Returns:
         A psycopg2 connection object, or None if the connection fails.
     """
     try:
-        conn = psycopg2.connect(config.DATABASE_URL)
+        db_url = config.DATABASE_URL
+
+        # Debug: Log connection attempt (masked for security)
+        if db_url:
+            # Mask the password and sensitive parts of the URL
+            safe_url = db_url.split('@')[-1] if '@' in db_url else 'URL set but format unclear'
+            print(f"[sql_utils] Attempting DB connection to: ...@{safe_url}", flush=True)
+            print(f"[sql_utils] Connect timeout: {DB_CONNECT_TIMEOUT}s", flush=True)
+        else:
+            print("[sql_utils] ERROR: DATABASE_URL is not set!", flush=True)
+            return None
+
+        # Add connection timeout to prevent indefinite hangs
+        conn = psycopg2.connect(db_url, connect_timeout=DB_CONNECT_TIMEOUT)
+        print("[sql_utils] Database connection established successfully", flush=True)
         return conn
     except psycopg2.OperationalError as e:
-        print(f"Error: Could not connect to the database. {e}")
+        print(f"[sql_utils] ERROR: Could not connect to the database: {e}", flush=True)
+        sys.stdout.flush()
+        return None
+    except Exception as e:
+        print(f"[sql_utils] ERROR: Unexpected error connecting to database: {e}", flush=True)
+        sys.stdout.flush()
         return None
 
 def execute_query(query, params=None):

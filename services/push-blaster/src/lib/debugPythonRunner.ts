@@ -22,7 +22,7 @@ export async function runPython({
   env = {},
   cwd,
   executionId,
-  timeoutMs = 120000 // 2 minute timeout for script execution
+  timeoutMs = 300000 // 5 minute timeout for script execution (scripts run complex DB queries)
 }: {
   pythonPath: string;
   scriptPath: string;

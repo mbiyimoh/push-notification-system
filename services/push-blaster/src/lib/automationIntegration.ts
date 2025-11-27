@@ -4,11 +4,12 @@
 import { UniversalAutomation, AutomationPush } from '@/types/automation';
 import { automationLogger } from './automationLogger';
 import { scriptExecutor } from './scriptExecutor';
+import { getCadenceServiceUrl, getPushBlasterUrl } from './environmentUtils';
 
 export class AutomationIntegration {
   private logPrefix = '[AutomationIntegration]';
-  private cadenceServiceUrl = 'http://localhost:3002';
-  private pushBlasterApiUrl = 'http://localhost:3001';
+  private cadenceServiceUrl = getCadenceServiceUrl();
+  private pushBlasterApiUrl = getPushBlasterUrl();
 
   /**
    * Generate audience for automation push using existing query-audience API

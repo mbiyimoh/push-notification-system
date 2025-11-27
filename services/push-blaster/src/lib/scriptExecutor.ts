@@ -5,6 +5,7 @@ import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { automationLogger } from './automationLogger';
+import { getGeneratedCsvsDir } from './environmentUtils';
 
 export interface ScriptConfig {
   scriptPath: string;
@@ -188,8 +189,8 @@ export class ScriptExecutor {
         console.log(`[DEBUG] Created output directory: ${this.outputDirectory}`);
       }
 
-      // Set project root for Python path - FIXED: need to go up to main-ai-apps level
-      const projectRoot = path.resolve(__dirname, '../../../..');
+      // Use process.cwd() for Railway compatibility (works in both Docker and local)
+      const projectRoot = process.cwd();
 
       // Prepare environment variables for the script
       const scriptEnv = {
@@ -251,8 +252,9 @@ export class ScriptExecutor {
         console.log(`[DEBUG] Dry run completed with ${audienceSize} users`);
       } else {
         // For regular runs, check the generated_csvs directory for actual files
-        const generatedCsvsDir = path.join(projectRoot, 'generated_csvs');
-        
+        // Use shared utility for Railway-compatible path resolution
+        const generatedCsvsDir = getGeneratedCsvsDir();
+
         if (!fs.existsSync(generatedCsvsDir)) {
           throw new Error(`Script did not create the expected generated_csvs directory: ${generatedCsvsDir}`);
         }
