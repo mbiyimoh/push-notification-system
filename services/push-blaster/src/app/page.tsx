@@ -3,6 +3,7 @@ import { StatsCard } from '@/app/components/dashboard/StatsCard';
 import UpcomingExecutions from '@/app/components/dashboard/UpcomingExecutions';
 import { RecentActivity } from '@/app/components/dashboard/RecentActivity';
 import { UniversalAutomation } from '@/types/automation';
+import { getBaseUrl } from '@/lib/getBaseUrl';
 
 interface ExecutionSummary {
   executionId: string;
@@ -19,7 +20,8 @@ interface ExecutionSummary {
 
 async function fetchAutomations(): Promise<UniversalAutomation[]> {
   try {
-    const res = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3001'}/api/automation/recipes`, {
+    const baseUrl = getBaseUrl();
+    const res = await fetch(`${baseUrl}/api/automation/recipes`, {
       cache: 'no-store',
     });
 
@@ -37,8 +39,9 @@ async function fetchAutomations(): Promise<UniversalAutomation[]> {
 
 async function fetchRecentActivity(): Promise<ExecutionSummary[]> {
   try {
+    const baseUrl = getBaseUrl();
     const res = await fetch(
-      `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3001'}/api/automation/monitor?type=executions&limit=5`,
+      `${baseUrl}/api/automation/monitor?type=executions&limit=5`,
       {
         cache: 'no-store',
       }

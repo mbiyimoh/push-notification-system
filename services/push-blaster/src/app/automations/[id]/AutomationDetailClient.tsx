@@ -10,6 +10,7 @@ import { getNextExecutionDate } from '@/lib/scheduleUtils';
 import { toast } from 'sonner';
 import { useKeyboardShortcuts } from '@/app/hooks/useKeyboardShortcuts';
 import { ShortcutsHelpModal } from '@/app/components/ui/ShortcutsHelpModal';
+import { ExecutionProgressModal } from '@/app/components/automations/ExecutionProgressModal';
 
 interface AutomationDetailClientProps {
   automation: UniversalAutomation;
@@ -73,6 +74,7 @@ export function AutomationDetailClient({
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [showRunDialog, setShowRunDialog] = useState(false);
   const [showPauseDialog, setShowPauseDialog] = useState(false);
+  const [showExecutionProgress, setShowExecutionProgress] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
   const logsPerPage = 10;
@@ -141,96 +143,34 @@ export function AutomationDetailClient({
     setError(null);
     setSuccessMessage(null);
 
-    try {
-      const response = await fetch('/api/automation/control', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          automationId: automation.id,
-          action: 'execute_now',
-          reason: 'Manual execution from detail page'
-        })
-      });
+    // Show the execution progress modal which will trigger execution via SSE
+    setShowExecutionProgress(true);
+  };
 
-      const data = await response.json();
+  const handleExecutionComplete = async (status: 'completed' | 'failed') => {
+    setIsRunning(false);
 
-      if (!data.success) {
-        throw new Error(data.message || 'Failed to execute automation');
-      }
-
-      // Start polling for completion
-      toast.info('Automation executing...', {
-        description: 'Checking for completion...',
-        duration: 60000,
-        id: 'execution-polling',
-      });
-
-      let pollCount = 0;
-      const maxPolls = 12;
-      const initialExecutionCount = executionHistory.length;
-
-      const pollInterval = setInterval(async () => {
-        pollCount++;
-
-        try {
-          // Fetch fresh execution history
-          const historyResponse = await fetch(`/api/automation/monitor?type=executions`);
-          const historyData = await historyResponse.json();
-
-          if (historyData.success) {
-            const filtered = (historyData.data.executions || [])
-              .filter((exec: { automationId: string }) => exec.automationId === automation.id)
-              .map((exec: { fullLog?: ExecutionLog }) => exec.fullLog)
-              .filter((log: ExecutionLog | undefined): log is ExecutionLog => log !== undefined);
-
-            // Check if new execution appeared
-            if (filtered.length > initialExecutionCount) {
-              clearInterval(pollInterval);
-              toast.dismiss('execution-polling');
-
-              const latestExecution = filtered[0];
-              if (latestExecution?.status === 'completed') {
-                toast.success('Automation executed successfully', {
-                  description: `Sent ${latestExecution.metrics.totalSentCount.toLocaleString()} pushes`,
-                });
-              } else if (latestExecution?.status === 'failed') {
-                toast.error('Execution failed', {
-                  description: 'Check execution details for more information',
-                });
-              } else {
-                toast.success('Execution started', {
-                  description: 'Check execution history for status',
-                });
-              }
-
-              setExecutionHistory(filtered);
-              router.refresh();
-              setIsRunning(false);
-              return;
-            }
-          }
-
-          if (pollCount >= maxPolls) {
-            clearInterval(pollInterval);
-            toast.dismiss('execution-polling');
-            toast.info('Execution may still be running', {
-              description: 'Refresh the page to check status',
-            });
-            setIsRunning(false);
-          }
-        } catch (pollErr) {
-          console.error('Poll error:', pollErr);
-        }
-      }, 5000);
-
-    } catch (err) {
+    if (status === 'completed') {
+      toast.success('Automation executed successfully');
+    } else {
       toast.error('Execution failed', {
-        description: err instanceof Error ? err.message : 'Unknown error',
+        description: 'Check execution details for more information',
       });
-      setIsRunning(false);
     }
+
+    // Refresh execution history
+    await refreshExecutionHistory();
+    router.refresh();
+  };
+
+  const handleCloseProgressModal = () => {
+    setShowExecutionProgress(false);
+    if (isRunning) {
+      toast.info('Execution running in background', {
+        description: 'Check execution history for status',
+      });
+    }
+    setIsRunning(false);
   };
 
   const handlePauseResume = async () => {
@@ -537,6 +477,16 @@ export function AutomationDetailClient({
       <ShortcutsHelpModal
         isOpen={showShortcutsHelp}
         onClose={() => setShowShortcutsHelp(false)}
+      />
+
+      {/* Execution Progress Modal */}
+      <ExecutionProgressModal
+        isOpen={showExecutionProgress}
+        onClose={handleCloseProgressModal}
+        automationId={automation.id}
+        automationName={automation.name}
+        startExecution={true}
+        onComplete={handleExecutionComplete}
       />
     </main>
   );

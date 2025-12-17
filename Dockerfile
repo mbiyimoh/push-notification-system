@@ -55,6 +55,9 @@ RUN touch basic_capabilities/__init__.py
 # Create tmp directory for Python debug output
 RUN mkdir -p /app/tmp
 
+# Create generated_csvs directory for audience generation output
+RUN mkdir -p /app/generated_csvs
+
 # Expose port
 EXPOSE 3000
 

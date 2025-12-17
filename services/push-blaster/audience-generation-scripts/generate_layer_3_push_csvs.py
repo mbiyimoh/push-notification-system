@@ -37,11 +37,40 @@ from datetime import datetime
 from typing import List, Dict, Any, Set
 from collections import defaultdict
 
-# Step 6: Use sys.path manipulation instead of PYTHONPATH
+# Step 6: Use sys.path manipulation for module imports
+# Handle both local development (monorepo) and Docker/Railway deployment
 import sys, os
-repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-if repo_root not in sys.path:
-    sys.path.insert(0, repo_root)
+script_dir = os.path.dirname(os.path.abspath(__file__))
+# In Docker: /app/audience-generation-scripts, cwd is /app
+# In local dev: services/push-blaster/audience-generation-scripts, repo root is 3 levels up
+cwd = os.getcwd()
+repo_root = os.path.abspath(os.path.join(script_dir, "..", "..", ".."))
+
+# Check if basic_capabilities exists in cwd (Docker case) or repo_root (local dev)
+print(f"[DIAG] cwd={cwd}", flush=True)
+print(f"[DIAG] script_dir={script_dir}", flush=True)
+print(f"[DIAG] repo_root={repo_root}", flush=True)
+print(f"[DIAG] cwd/basic_capabilities exists: {os.path.exists(os.path.join(cwd, 'basic_capabilities'))}", flush=True)
+print(f"[DIAG] repo_root/basic_capabilities exists: {os.path.exists(os.path.join(repo_root, 'basic_capabilities'))}", flush=True)
+
+if os.path.exists(os.path.join(cwd, "basic_capabilities")):
+    # Docker/Railway: basic_capabilities is at /app/basic_capabilities
+    print(f"[DIAG] Using cwd path: {cwd}", flush=True)
+    if cwd not in sys.path:
+        sys.path.insert(0, cwd)
+    # List contents to verify structure
+    bc_path = os.path.join(cwd, "basic_capabilities")
+    print(f"[DIAG] basic_capabilities contents: {os.listdir(bc_path)}", flush=True)
+    subdir = os.path.join(bc_path, "internal_db_queries_toolbox")
+    if os.path.exists(subdir):
+        print(f"[DIAG] internal_db_queries_toolbox contents: {os.listdir(subdir)}", flush=True)
+elif os.path.exists(os.path.join(repo_root, "basic_capabilities")):
+    # Local development: basic_capabilities is at monorepo root
+    print(f"[DIAG] Using repo_root path: {repo_root}", flush=True)
+    if repo_root not in sys.path:
+        sys.path.insert(0, repo_root)
+
+print(f"[DIAG] sys.path[0:3]={sys.path[:3]}", flush=True)
 
 # Log the sys.path for debugging
 with open(_log_path, "a", buffering=1) as f:
@@ -483,8 +512,35 @@ def main():
     # Original: lookback_hours=48, cooling_hours=12 → get activity from 48-12=36 hours ago
     effective_lookback = args.lookback_hours - args.cooling_hours
     activity_data = get_daily_activity_data(effective_lookback)
+
+    # Handle database query failure - activity_data is None if DB connection failed
+    if activity_data is None:
+        import sys
+        # Print to stderr so it appears in the error output
+        print("❌ ERROR: Database query failed - activity_data is None", file=sys.stderr, flush=True)
+        print("   This usually means DATABASE_URL is not set or database is unreachable", file=sys.stderr, flush=True)
+        db_url = os.environ.get('DATABASE_URL', '')
+        db_url_set = db_url is not None and len(db_url) > 0
+        print(f"   DATABASE_URL set: {db_url_set}", file=sys.stderr, flush=True)
+        print(f"   DATABASE_URL length: {len(db_url) if db_url else 0}", file=sys.stderr, flush=True)
+        # Show first 20 chars (safe - just protocol/prefix) to help diagnose format issues
+        if db_url:
+            prefix = db_url[:30] if len(db_url) > 30 else db_url
+            # Mask anything after :// that might be username
+            if '://' in prefix:
+                protocol = prefix.split('://')[0]
+                print(f"   DATABASE_URL prefix: {protocol}://...", file=sys.stderr, flush=True)
+            else:
+                print(f"   DATABASE_URL prefix: {prefix[:10]}...", file=sys.stderr, flush=True)
+        if db_url and '@' in db_url:
+            host_part = db_url.split('@')[-1][:60]
+            print(f"   DATABASE_URL host: ...@{host_part}", file=sys.stderr, flush=True)
+        else:
+            print(f"   DATABASE_URL missing '@' - may be malformed", file=sys.stderr, flush=True)
+        raise RuntimeError("Database query failed - check DATABASE_URL format and database connectivity")
+
     print(f"   Found {len(activity_data)} total activity records")
-    
+
     if not activity_data:
         print("⚠️  No recent activity found. Exiting.")
         return

@@ -4,6 +4,7 @@ import { HeaderNav } from '@/app/components/nav/HeaderNav';
 import { AutomationDetailClient } from './AutomationDetailClient';
 import { UniversalAutomation } from '@/types/automation';
 import { ExecutionLog } from '@/lib/automationLogger';
+import { getBaseUrl } from '@/lib/getBaseUrl';
 
 interface PageProps {
   params: Promise<{
@@ -13,7 +14,7 @@ interface PageProps {
 
 async function fetchAutomation(id: string): Promise<UniversalAutomation | null> {
   try {
-    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3001';
+    const baseUrl = getBaseUrl();
     const response = await fetch(`${baseUrl}/api/automation/recipes/${id}`, {
       cache: 'no-store'
     });
@@ -46,7 +47,7 @@ interface ExecutionResponse {
 
 async function fetchExecutionHistory(automationId: string): Promise<ExecutionLog[]> {
   try {
-    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3001';
+    const baseUrl = getBaseUrl();
     const response = await fetch(`${baseUrl}/api/automation/monitor?type=executions`, {
       cache: 'no-store'
     });

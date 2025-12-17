@@ -1,0 +1,117 @@
+# Dockerfile.unified
+# Unified Push Notification System: push-blaster + push-cadence-service
+# For deployment to Tradeblock GCP infrastructure
+
+# ============================================================================
+# STAGE 1: Build push-blaster
+# ============================================================================
+FROM node:20-alpine AS builder-blaster
+
+WORKDIR /app/push-blaster
+
+# Copy package files
+COPY services/push-blaster/package*.json ./
+
+# Install dependencies
+RUN npm ci
+
+# Copy source code
+COPY services/push-blaster/ ./
+
+# Copy shared Python utilities
+COPY shared/python-utilities/ ./shared/python-utilities/
+
+# Ensure automations directory exists
+RUN mkdir -p .automations
+
+# Build Next.js app
+RUN npm run build
+
+# ============================================================================
+# STAGE 2: Build push-cadence-service
+# ============================================================================
+FROM node:20-alpine AS builder-cadence
+
+WORKDIR /app/push-cadence-service
+
+# Copy package files
+COPY services/push-cadence-service/package*.json ./
+
+# Install dependencies (skip postinstall migration during build)
+RUN npm ci --ignore-scripts
+
+# Copy source code
+COPY services/push-cadence-service/ ./
+
+# Build Next.js app
+RUN npm run build
+
+# ============================================================================
+# STAGE 3: Production runtime
+# ============================================================================
+FROM node:20-alpine AS runner
+
+# Install Python (for audience generation scripts) and supervisord
+RUN apk add --no-cache \
+    python3 \
+    py3-pip \
+    postgresql-dev \
+    gcc \
+    python3-dev \
+    musl-dev \
+    supervisor \
+    && pip3 install --no-cache-dir --break-system-packages psycopg2-binary python-dotenv \
+    && apk del gcc python3-dev musl-dev
+
+WORKDIR /app
+
+ENV NODE_ENV=production
+
+# ----------------------------------------------------------------------------
+# Copy push-blaster
+# ----------------------------------------------------------------------------
+COPY --from=builder-blaster /app/push-blaster/package*.json ./push-blaster/
+COPY --from=builder-blaster /app/push-blaster/.next ./push-blaster/.next
+COPY --from=builder-blaster /app/push-blaster/public ./push-blaster/public
+COPY --from=builder-blaster /app/push-blaster/node_modules ./push-blaster/node_modules
+COPY --from=builder-blaster /app/push-blaster/.automations/ ./push-blaster/.automations/
+COPY --from=builder-blaster /app/push-blaster/audience-generation-scripts ./push-blaster/audience-generation-scripts
+COPY --from=builder-blaster /app/push-blaster/shared/python-utilities/ ./push-blaster/shared/python-utilities/
+
+# Create Python module structure for imports
+RUN mkdir -p /app/push-blaster/basic_capabilities/internal_db_queries_toolbox \
+    && cp -r /app/push-blaster/shared/python-utilities/* /app/push-blaster/basic_capabilities/internal_db_queries_toolbox/ \
+    && touch /app/push-blaster/basic_capabilities/__init__.py
+
+# Create required directories
+RUN mkdir -p /app/push-blaster/tmp /app/push-blaster/generated_csvs
+
+# ----------------------------------------------------------------------------
+# Copy push-cadence-service
+# ----------------------------------------------------------------------------
+COPY --from=builder-cadence /app/push-cadence-service/package*.json ./push-cadence-service/
+COPY --from=builder-cadence /app/push-cadence-service/.next ./push-cadence-service/.next
+COPY --from=builder-cadence /app/push-cadence-service/public ./push-cadence-service/public
+COPY --from=builder-cadence /app/push-cadence-service/node_modules ./push-cadence-service/node_modules
+COPY --from=builder-cadence /app/push-cadence-service/db ./push-cadence-service/db
+COPY --from=builder-cadence /app/push-cadence-service/scripts ./push-cadence-service/scripts
+
+# ----------------------------------------------------------------------------
+# Copy supervisord configuration
+# ----------------------------------------------------------------------------
+COPY supervisord.conf /etc/supervisord.conf
+
+# Create log directory for supervisor
+RUN mkdir -p /var/log/supervisor
+
+# Expose ports
+# 3001 = push-blaster (main UI, API)
+# 3002 = push-cadence-service (internal cadence API)
+EXPOSE 3001 3002
+
+# Health check - verify both services are responding
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD wget -q --spider http://localhost:3001/api/health && wget -q --spider http://localhost:3002/api/health || exit 1
+
+# Start supervisord to manage both services
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisord.conf"]

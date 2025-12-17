@@ -1,12 +1,99 @@
 # Push Notification System
 
-## Project Overview
-A push notification system for Tradeblock consisting of two services deployed to Railway:
+## Developer Context
 
-| Service | Purpose | Port | Railway URL |
-|---------|---------|------|-------------|
-| **push-blaster** | Main UI, automation engine, push delivery | 3001 | https://push-notification-system-production.up.railway.app |
-| **push-cadence-service** | Cadence rules, frequency caps, notification tracking | 3002 | https://push-cadence-service-production-38ac.up.railway.app |
+**Primary Developer:** Technical product person (not a traditional software engineer) using Claude Code for implementation. Capable of understanding technical concepts but relies on AI assistance for actual coding, git operations, and deployments.
+
+**Relationship to Tradeblock:** Building internal tools with guidance from lead developer. Must be careful and respectful of production infrastructure.
+
+**AI Agent Instructions:** When working with this developer:
+- Walk through steps explicitly, one at a time
+- Explain *why* before *how*
+- Always test locally before pushing to production
+- Never push untested code
+- Ask for confirmation before destructive operations
+- Default to caution over speed
+
+---
+
+## Development Protocol (MUST FOLLOW)
+
+### Safe Development Workflow
+
+```
+1. EDIT     →  2. TEST LOCAL  →  3. COMMIT  →  4. REBUILD  →  5. DEPLOY  →  6. VERIFY
+(code)         (npm run dev      (git)         (gcloud)       (gh action)   (health
+               + VPN)                                                        checks)
+```
+
+### Before Making Changes
+- [ ] Understand what you're changing and why
+- [ ] Check current git status: `git status`
+- [ ] Create a branch for significant changes: `git checkout -b feature/description`
+
+### Local Testing (REQUIRED before pushing)
+```bash
+# 1. Connect to VPN (required for database access)
+# 2. Start local dev servers
+cd services/push-blaster
+npm run dev
+# 3. Test at http://localhost:3001
+# 4. Verify changes work as expected
+```
+
+### Pushing to Production
+```bash
+# 1. Commit changes
+git add .
+git commit -m "Clear description of change"
+git push origin main
+
+# 2. Rebuild Docker image (from project root)
+cd /Users/AstroLab/Desktop/code-projects/push-notification-system
+gcloud builds submit --config cloudbuild.yaml .
+
+# 3. Deploy via GitHub Action (self-service)
+gh workflow run deploy-push.yml --repo Tradeblock-dev/main-backend
+
+# 4. Verify at https://push.tradeblock.us
+```
+
+### Iterative Debug Workflow
+When debugging issues in production:
+```bash
+# 1. Make fix locally
+# 2. Rebuild image
+gcloud builds submit --config cloudbuild.yaml .
+
+# 3. Deploy
+gh workflow run deploy-push.yml --repo Tradeblock-dev/main-backend
+
+# 4. Test at push.tradeblock.us → see results → repeat
+```
+
+**Python Script Errors:** When automations fail with "Python script exited with code 1", the actual Python traceback is now captured and displayed in the execution detail page in the UI.
+
+### What NOT To Do
+- Push untested code directly to production
+- Modify environment variables without understanding them
+- Run database migrations without lead dev approval
+- Delete or modify production data directly
+- Run commands you don't understand
+
+---
+
+## Project Overview
+
+A push notification system for Tradeblock. **Unified Docker deployment** to GCP (migrated from Railway Dec 2025).
+
+**Production URL:** https://push.tradeblock.us
+
+| Service | Purpose | Port |
+|---------|---------|------|
+| **push-blaster** | Main UI, automation engine, push delivery | 3001 |
+| **push-cadence-service** | Cadence rules, frequency caps, notification tracking | 3002 |
+
+**Note:** Both services run in a single unified Docker container. They communicate internally via `localhost`.
 
 ## Developer Guides
 
@@ -14,7 +101,7 @@ Comprehensive documentation available in `developer-guides/`:
 - **push-notification-system-guide.md** - Overall system architecture and flows
 - **push-blaster-guide.md** - Automation engine, API routes, Firebase integration, **UI components & keyboard shortcuts**
 - **push-cadence-service-guide.md** - Cadence rules, database schema, filtering logic
-- **railway-deployment-guide.md** - Deployment configuration, troubleshooting
+- **railway-deployment-guide.md** - ⚠️ OBSOLETE (migrated to GCP Dec 2025) - kept for historical reference
 
 ### Recent UI Enhancements (Nov 2025)
 
@@ -33,43 +120,63 @@ Comprehensive documentation available in `developer-guides/`:
 
 ## Infrastructure
 
-### Railway Deployment (Two Services)
+### GCP Deployment (Unified Container)
 
-**push-notification-system (push-blaster)**:
-- Dockerfile: `Dockerfile`
-- Config: `railway.toml`
-- No healthcheck (RDS connection can timeout)
+**Docker Image (GAR):**
+```
+us-east1-docker.pkg.dev/tradeblock-infrastructure/push-notification-system/push-notification-system:latest
+```
 
-**push-cadence-service**:
-- Dockerfile: `Dockerfile.cadence`
-- Config: `railway.cadence.toml`
-- Healthcheck enabled (`/api/health`, 300s timeout)
+**Key Files:**
+- `Dockerfile.unified` - Multi-stage build for both services
+- `cloudbuild.yaml` - Cloud Build configuration
+- `supervisord.conf` - Process manager for running both services
+- `DEPLOYMENT.md` - Detailed deployment guide
 
-### Databases (External to Railway)
+**Rebuild Command:**
+```bash
+gcloud builds submit --config cloudbuild.yaml .
+```
+
+**Health Checks:**
+- Port 3001: `/api/health` (push-blaster)
+- Port 3002: `/api/health` (push-cadence-service)
+
+### Databases
 
 | Database | Env Variable | Provider | Used By |
 |----------|--------------|----------|---------|
 | Main Tradeblock | `DATABASE_URL` | AWS RDS PostgreSQL | push-blaster (user data, audience queries) |
 | Push Records | `PUSH_CADENCE_DATABASE_URL` | Neon PostgreSQL | push-cadence-service (notification history, cadence rules) |
 
-**Important**: Use the RDS endpoint `production-database.cluster-cseupqwlh6at.us-east-1.rds.amazonaws.com:5432`, NOT `production.database.primary` (private hostname that doesn't resolve outside VPC)
+**Important**: Database must be accessible from GCP. The internal RDS hostname should resolve from within Tradeblock infrastructure.
 
 ### Environment Variables
 
-**push-blaster**:
+**Production (set in GCP, inherited from Tradeblock infrastructure):**
 ```
-DATABASE_URL          - Main Tradeblock PostgreSQL (AWS RDS)
-FIREBASE_PROJECT_ID   - Firebase project ID
-FIREBASE_CLIENT_EMAIL - Firebase service account email
-FIREBASE_PRIVATE_KEY  - Firebase private key (with \n escapes)
-CADENCE_SERVICE_URL   - https://push-cadence-service-production-38ac.up.railway.app
-GRAPHQL_ENDPOINT      - GraphQL API for device tokens
+DATABASE_URL              - Internal Tradeblock PostgreSQL
+PUSH_CADENCE_DATABASE_URL - Neon PostgreSQL (notification history)
+FIREBASE_PROJECT_ID       - Firebase project ID
+FIREBASE_CLIENT_EMAIL     - Firebase service account email
+FIREBASE_PRIVATE_KEY      - Firebase private key (with \n escapes)
+GRAPHQL_ENDPOINT          - GraphQL API for device tokens
+CADENCE_SERVICE_URL       - http://localhost:3002 (ALWAYS localhost in unified container)
 ```
 
-**push-cadence-service**:
+**Local Development (.env file):**
 ```
-PUSH_CADENCE_DATABASE_URL - Neon PostgreSQL connection
+# Get these values from lead dev - must match production
+DATABASE_URL              - Same as production (requires VPN)
+PUSH_CADENCE_DATABASE_URL - Same as production
+FIREBASE_PROJECT_ID       - Same as production
+FIREBASE_CLIENT_EMAIL     - Same as production
+FIREBASE_PRIVATE_KEY      - Same as production
+GRAPHQL_ENDPOINT          - Same as production
+CADENCE_SERVICE_URL       - http://localhost:3002
 ```
+
+**Critical:** `CADENCE_SERVICE_URL` must be `http://localhost:3002` (not an external URL) because both services run in the same container.
 
 ## Development
 
@@ -81,12 +188,19 @@ npm run dev:push-only # Starts only push-blaster
 npm run dev:cadence   # Starts only cadence-service
 ```
 
-### Deployment
+### Deployment to GCP
+
 ```bash
-railway up --detach  # Deploy from local directory with Dockerfile
+# 1. Rebuild Docker image (from project root)
+gcloud builds submit --config cloudbuild.yaml .
+
+# 2. Deploy via GitHub Action (self-service)
+gh workflow run deploy-push.yml --repo Tradeblock-dev/main-backend
+
+# 3. Verify at https://push.tradeblock.us/api/health
 ```
 
-Note: Environment variable changes in Railway trigger redeployment from git repo using Railpack (which fails). Always use `railway up` to deploy with the Dockerfile configuration.
+**Note:** The Docker image is stored in Google Artifact Registry (GAR). Deployment is self-service via GitHub Action.
 
 ## Architecture Notes
 
@@ -95,7 +209,8 @@ Note: Environment variable changes in Railway trigger redeployment from git repo
 - push-cadence: `/api/health` returns 200/503 (healthcheck enabled)
 
 ### Service Communication
-- push-blaster calls push-cadence-service via `CADENCE_SERVICE_URL`
+- Both services run in same container, communicate via `localhost:3002`
+- `CADENCE_SERVICE_URL` must always be `http://localhost:3002`
 - Cadence filtering before push sends (layers 2, 3, 5)
 - Fail-open: If cadence service unavailable, sends proceed
 

@@ -3,6 +3,7 @@ import Papa from 'papaparse';
 import { fetchDeviceTokens } from '../../../lib/graphql';
 import { admin, getPushClient } from '../../../lib/firebaseAdmin';
 import { validateVariables, processVariableReplacements } from '../../../lib/variableProcessor';
+import { getCadenceServiceUrl } from '../../../lib/environmentUtils';
 import fs from 'fs';
 import path from 'path';
 
@@ -271,7 +272,7 @@ export async function POST(req: NextRequest) {
 
     if (layerId !== 4) { // Bypass cadence check for Layer 4 (Test)
       // CADENCE FILTERING
-      const cadenceResponse = await fetch('http://localhost:3002/api/filter-audience', {
+      const cadenceResponse = await fetch(`${getCadenceServiceUrl()}/api/filter-audience`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ userIds, layerId }),
@@ -433,7 +434,7 @@ export async function POST(req: NextRequest) {
               .map(row => row.user_id);
             
             for (const userId of userIdsForSuccessfulTokens) {
-              fetch('http://localhost:3002/api/track-notification', {
+              fetch(`${getCadenceServiceUrl()}/api/track-notification`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({

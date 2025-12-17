@@ -24,7 +24,10 @@
       "WebFetch(domain:supabase.com)",
       "SlashCommand(/create-dev-guide:*)",
       "WebFetch(domain:docs.railway.com)",
-      "SlashCommand(/docs:sync)"
+      "SlashCommand(/docs:sync)",
+      "SlashCommand(/spec:ideate:*)",
+      "WebFetch(domain:push-notification-system-production.up.railway.app)",
+      "WebFetch(domain:railway.com)"
     ],
     "deny": [],
     "ask": []

@@ -192,10 +192,34 @@ export class ScriptExecutor {
       // Use process.cwd() for Railway compatibility (works in both Docker and local)
       const projectRoot = process.cwd();
 
+      // Get DATABASE_URL - try multiple sources due to Next.js env var handling
+      // 1. Direct from process.env (may be inlined at build time)
+      // 2. From actual runtime environment (bypass Next.js inlining)
+      let databaseUrl = process.env.DATABASE_URL;
+
+      // If not found in process.env, try reading from actual environment
+      // This handles the case where Next.js inlined an undefined value at build time
+      if (!databaseUrl) {
+        // Try using child_process to read actual env (bypasses Next.js)
+        try {
+          const { execSync } = require('child_process');
+          databaseUrl = execSync('echo $DATABASE_URL', { encoding: 'utf8' }).trim();
+          if (databaseUrl) {
+            console.log(`[SCRIPTEXECUTOR] Got DATABASE_URL from shell (length: ${databaseUrl.length})`);
+          }
+        } catch {
+          console.log(`[SCRIPTEXECUTOR] Failed to get DATABASE_URL from shell`);
+        }
+      }
+
+      console.log(`[SCRIPTEXECUTOR] DATABASE_URL available: ${databaseUrl ? 'YES' : 'NO'}`);
+
       // Prepare environment variables for the script
-      const scriptEnv = {
+      const scriptEnv: Record<string, string | undefined> = {
         ...process.env,
-        PYTHONPATH: projectRoot,  // CRITICAL: Required for basic_capabilities imports
+        // Explicitly set DATABASE_URL from our resolved value
+        DATABASE_URL: databaseUrl,
+        PYTHONPATH: projectRoot,
         OUTPUT_PATH: outputPath,
         EXECUTION_ID: executionId,
         ...this.formatScriptParameters(parameters)
@@ -239,7 +263,11 @@ export class ScriptExecutor {
       };
       
       if (!result.success) {
-        throw new Error(`Script execution failed: ${result.error}`);
+        // Create enhanced error with stdout/stderr for debugging
+        const enhancedError = new Error(`Script execution failed: ${result.error}`) as Error & { stdout?: string; stderr?: string };
+        enhancedError.stdout = result.stdout;
+        enhancedError.stderr = result.stderr;
+        throw enhancedError;
       }
 
       let csvFiles: string[] = [];
@@ -307,10 +335,17 @@ export class ScriptExecutor {
       this.logError(`Script execution failed for ${scriptId}`, error);
 
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+
+      // Extract stdout/stderr from the error context if available
+      // This happens when runPython succeeds but returns non-zero exit code
+      const errorWithOutput = error as { stdout?: string; stderr?: string };
+
       return {
         success: false,
         executionTime,
-        error: errorMessage
+        error: errorMessage,
+        stdout: errorWithOutput.stdout || '',
+        stderr: errorWithOutput.stderr || ''
       };
     }
   }

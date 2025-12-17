@@ -5,14 +5,20 @@ This script provides helper functions to connect to the PostgreSQL database
 and execute SQL queries using the credentials loaded from the config.
 """
 import sys
+import time
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from basic_capabilities.internal_db_queries_toolbox import config
 
-# Connection timeout in seconds - prevents indefinite hangs
-DB_CONNECT_TIMEOUT = 30
+# Connection timeout in seconds - increased for Railway -> AWS RDS latency
+# Python scripts run complex queries that can take time to establish connections
+DB_CONNECT_TIMEOUT = 120
 
-def get_db_connection():
+# Retry settings for connection resilience
+MAX_RETRIES = 3
+RETRY_DELAY_BASE = 5  # Base delay in seconds, exponentially increases
+
+def get_db_connection(retry_count=0):
     """
     Establishes a connection to the PostgreSQL database.
 
@@ -35,12 +41,28 @@ def get_db_connection():
             return None
 
         # Add connection timeout to prevent indefinite hangs
+        # Add sslmode=require to match Node.js pg behavior with AWS RDS
+        # Check if sslmode is already in the URL
+        if 'sslmode=' not in db_url:
+            separator = '&' if '?' in db_url else '?'
+            db_url = f"{db_url}{separator}sslmode=require"
+            print(f"[sql_utils] Added sslmode=require to connection string", flush=True)
+
         conn = psycopg2.connect(db_url, connect_timeout=DB_CONNECT_TIMEOUT)
         print("[sql_utils] Database connection established successfully", flush=True)
         return conn
     except psycopg2.OperationalError as e:
         print(f"[sql_utils] ERROR: Could not connect to the database: {e}", flush=True)
         sys.stdout.flush()
+
+        # Retry with exponential backoff
+        if retry_count < MAX_RETRIES:
+            delay = RETRY_DELAY_BASE * (2 ** retry_count)
+            print(f"[sql_utils] Retrying connection in {delay}s (attempt {retry_count + 1}/{MAX_RETRIES})...", flush=True)
+            time.sleep(delay)
+            return get_db_connection(retry_count + 1)
+
+        print(f"[sql_utils] All {MAX_RETRIES} connection attempts failed", flush=True)
         return None
     except Exception as e:
         print(f"[sql_utils] ERROR: Unexpected error connecting to database: {e}", flush=True)

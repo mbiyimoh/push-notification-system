@@ -8,12 +8,20 @@ import { automationLogger } from '@/lib/automationLogger';
 
 // POST - Control automation (cancel, emergency stop, pause, resume)
 export async function POST(req: NextRequest) {
+  // [CONTROL-API] - Debug checkpoint: Control API entry
+  console.log(`[CONTROL-API] ═══════════════════════════════════════════════════════════════`);
+  console.log(`[CONTROL-API] POST request received at ${new Date().toISOString()}`);
+
   try {
     const automationEngine = getAutomationEngineInstance();
     const body = await req.json();
     const { automationId, action, reason } = body;
 
+    console.log(`[CONTROL-API] Received action: ${action} for automation: ${automationId}`);
+    console.log(`[CONTROL-API] Reason: ${reason || '(none provided)'}`);
+
     if (!automationId || !action) {
+      console.log(`[CONTROL-API] ❌ REJECTED: Missing required fields`);
       return NextResponse.json({
         success: false,
         message: 'automationId and action are required',
@@ -22,13 +30,16 @@ export async function POST(req: NextRequest) {
     }
 
     // Load automation to verify it exists
+    console.log(`[CONTROL-API] Loading automation from storage...`);
     const automation = await automationStorage.loadAutomation(automationId);
     if (!automation) {
+      console.log(`[CONTROL-API] ❌ NOT FOUND: Automation ${automationId} not in storage`);
       return NextResponse.json({
         success: false,
         message: 'Automation not found'
       }, { status: 404 });
     }
+    console.log(`[CONTROL-API] ✅ Automation loaded: ${automation.name}`);
 
     let result;
     const timestamp = new Date().toISOString();
@@ -96,20 +107,26 @@ export async function POST(req: NextRequest) {
 
       case 'execute_now':
         // Execute automation immediately
+        console.log(`[CONTROL-API] ═══ EXECUTE_NOW ACTION ═══`);
+        console.log(`[CONTROL-API] Calling executeAutomationNow() for: ${automation.name}`);
+        console.log(`[CONTROL-API] Automation ID: ${automationId}`);
         try {
           const executeResult = await automationEngine.executeAutomationNow(automation);
+          console.log(`[CONTROL-API] executeAutomationNow() returned:`, executeResult);
           result = {
             success: executeResult.success,
             executionId: executeResult.executionId || automationId,
             status: 'running',
             message: executeResult.message || 'Automation execution started'
           };
+          console.log(`[CONTROL-API] ✅ Execute now completed: success=${executeResult.success}`);
           automationLogger.log('info', automationId, 'control', 'Immediate execution triggered', {
             reason: reason || 'Manual execution',
             timestamp
           });
         } catch (error: unknown) {
           const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          console.log(`[CONTROL-API] ❌ Execute now FAILED: ${errorMessage}`);
           result = {
             success: false,
             executionId: automationId,

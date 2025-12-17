@@ -18,7 +18,20 @@ from typing import Dict, List, Any
 from collections import defaultdict
 
 # Add the project root to the Python path
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
+# Handle both local development (monorepo) and Docker/Railway deployment
+script_dir = os.path.dirname(os.path.abspath(__file__))
+cwd = os.getcwd()
+repo_root = os.path.abspath(os.path.join(script_dir, "..", "..", ".."))
+
+# Check if basic_capabilities exists in cwd (Docker case) or repo_root (local dev)
+if os.path.exists(os.path.join(cwd, "basic_capabilities")):
+    # Docker/Railway: basic_capabilities is at /app/basic_capabilities
+    if cwd not in sys.path:
+        sys.path.insert(0, cwd)
+elif os.path.exists(os.path.join(repo_root, "basic_capabilities")):
+    # Local development: basic_capabilities is at monorepo root
+    if repo_root not in sys.path:
+        sys.path.insert(0, repo_root)
 
 from basic_capabilities.internal_db_queries_toolbox.push_csv_queries import (
     get_trending_products_weekly,

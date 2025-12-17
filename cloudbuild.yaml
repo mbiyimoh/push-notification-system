@@ -1,0 +1,22 @@
+substitutions:
+  _IMAGE: us-east1-docker.pkg.dev/tradeblock-infrastructure/push-notification-system/push-notification-system
+  _TAG: latest
+
+steps:
+  # Build the Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-f'
+      - 'Dockerfile.unified'
+      - '-t'
+      - '${_IMAGE}:${_TAG}'
+      - '.'
+
+images:
+  - '${_IMAGE}:${_TAG}'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: '1800s'

@@ -7,6 +7,7 @@ export const dynamic = 'force-dynamic';
 
 import { NextRequest, NextResponse } from 'next/server';
 import { registerRunningTest, unregisterRunningTest } from '@/lib/testProcessManager';
+import { getCadenceServiceUrl, getGeneratedCsvsDir } from '@/lib/environmentUtils';
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -149,6 +150,8 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     }, { status: 500 });
   }
 }
+
+// getCadenceServiceUrl is now imported from @/lib/environmentUtils
 
 // Main test execution function
 async function executeTest(
@@ -341,6 +344,8 @@ async function executeScript(scriptConfig: CustomScript, sendLog: SendLogFunctio
   }
 }
 
+// getGeneratedCsvsDir is now imported from @/lib/environmentUtils
+
 // Helper function to filter audiences based on test mode
 async function filterAudiences(automation: Automation, audienceType: 'TEST' | 'REAL', sendLog: SendLogFunction): Promise<AudienceInfo[]> {
   const fs = require('fs');
@@ -348,15 +353,15 @@ async function filterAudiences(automation: Automation, audienceType: 'TEST' | 'R
   const Papa = require('papaparse');
 
   const audiences: AudienceInfo[] = [];
-  // Railway-compatible relative path using process.cwd()
-  const projectRoot = process.cwd();
-  const generatedCsvsDir = path.join(projectRoot, '..', '..', 'generated_csvs');
-  
+  const generatedCsvsDir = getGeneratedCsvsDir();
+
   // Check if generated_csvs directory exists
   if (!fs.existsSync(generatedCsvsDir)) {
-    sendLog('error', `Generated CSVs directory not found: ${generatedCsvsDir}`, 'FILTER');
+    sendLog('error', `Generated CSVs directory not found: ${generatedCsvsDir}. Checked: ${process.cwd()}/generated_csvs and ${process.cwd()}/../../generated_csvs`, 'FILTER');
     return audiences;
   }
+
+  sendLog('info', `Using generated CSVs directory: ${generatedCsvsDir}`, 'FILTER');
   
   // Get all CSV files in the directory and sort by modification time (newest first)
   const allCsvFiles = fs.readdirSync(generatedCsvsDir)
@@ -522,7 +527,7 @@ async function executeDryRun(push: PushSequenceItem, audience: AudienceInfo, sen
       sendLog('info', 'Simulating cadence filtering rules...', 'DRY_RUN');
       
       try {
-        const cadenceResponse = await fetch('http://localhost:3002/api/filter-audience', {
+        const cadenceResponse = await fetch(`${getCadenceServiceUrl()}/api/filter-audience`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ userIds, layerId: effectiveLayerId }),
@@ -709,7 +714,7 @@ async function executeLiveSend(push: PushSequenceItem, audience: AudienceInfo, s
       sendLog('info', `🔍 Applying Layer ${effectiveLayerId} cadence filtering rules (72-hour cooldown protection)...`, 'LIVE_SEND');
       
       try {
-        const cadenceResponse = await fetch('http://localhost:3002/api/filter-audience', {
+        const cadenceResponse = await fetch(`${getCadenceServiceUrl()}/api/filter-audience`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ userIds, layerId: effectiveLayerId }),
@@ -888,7 +893,7 @@ async function executeLiveSend(push: PushSequenceItem, audience: AudienceInfo, s
         // Only track notifications for users who actually received them
         for (const userId of actuallyDeliveredUserIds) {
           try {
-            const response = await fetch('http://localhost:3002/api/track-notification', {
+            const response = await fetch(`${getCadenceServiceUrl()}/api/track-notification`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({

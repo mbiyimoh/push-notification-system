@@ -67,3 +67,9 @@ ecosystem.config.js.lock
 # Simple Task Master - User tasks are git-ignored
 .simple-task-master/tasks/
 .simple-task-master/lock
+
+# Local Python module (copied from shared/python-utilities for local dev)
+basic_capabilities/
+
+# Quick checks (ephemeral tests)
+.quick-checks/
