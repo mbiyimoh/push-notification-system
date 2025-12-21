@@ -12,6 +12,17 @@ interface PageProps {
   }>;
 }
 
+// Stats interface for the overview panel
+export interface ExecutionStats {
+  totalExecutions: number;
+  successfulExecutions: number;
+  failedExecutions: number;
+  recentSuccessRate: number;
+  lastRunWithin24h: boolean;
+  lastAudienceSize: number;
+  healthStatus: 'healthy' | 'stale' | 'failed' | 'unknown';
+}
+
 async function fetchAutomation(id: string): Promise<UniversalAutomation | null> {
   try {
     const baseUrl = getBaseUrl();
@@ -34,23 +45,18 @@ async function fetchAutomation(id: string): Promise<UniversalAutomation | null> 
   }
 }
 
-interface ExecutionResponse {
-  executionId?: string;
-  id?: string;
-  automationId: string;
-  name?: string;
-  startTime: string;
-  endTime?: string;
-  status?: 'running' | 'completed' | 'failed' | 'cancelled';
-  fullLog?: ExecutionLog;
+interface ExecutionHistoryResult {
+  history: ExecutionLog[];
+  stats: ExecutionStats;
 }
 
-async function fetchExecutionHistory(automationId: string): Promise<ExecutionLog[]> {
+async function fetchExecutionHistory(automationId: string): Promise<ExecutionHistoryResult> {
   try {
     const baseUrl = getBaseUrl();
-    const response = await fetch(`${baseUrl}/api/automation/monitor?type=executions`, {
-      cache: 'no-store'
-    });
+    const response = await fetch(
+      `${baseUrl}/api/automation/executions?automationId=${automationId}&limit=50`,
+      { cache: 'no-store' }
+    );
 
     if (!response.ok) {
       throw new Error(`Failed to fetch execution history: ${response.statusText}`);
@@ -61,42 +67,48 @@ async function fetchExecutionHistory(automationId: string): Promise<ExecutionLog
       throw new Error(data.message || 'Failed to fetch execution history');
     }
 
-    // Filter executions for this automation
-    const allExecutions: ExecutionResponse[] = data.data.executions || [];
-    return allExecutions
-      .filter((exec: ExecutionResponse) => exec.automationId === automationId)
-      .map((exec: ExecutionResponse): ExecutionLog => {
-        if (exec.fullLog) {
-          return exec.fullLog;
-        }
-        // If no fullLog, construct from basic data
-        return {
-          executionId: exec.executionId || exec.id || '',
-          automationId: exec.automationId,
-          automationName: exec.name || 'Unknown',
-          startTime: exec.startTime,
-          endTime: exec.endTime,
-          status: exec.status || 'running',
-          phases: [],
-          pushLogs: [],
-          errors: [],
-          metrics: {
-            totalDuration: 0,
-            audienceGenerationTime: 0,
-            testSendingTime: 0,
-            liveExecutionTime: 0,
-            totalPushes: 0,
-            successfulPushes: 0,
-            failedPushes: 0,
-            totalAudienceSize: 0,
-            totalSentCount: 0,
-            averagePushTime: 0
-          }
-        };
-      });
+    const dbStats = data.data.stats;
+
+    // Determine health status
+    let healthStatus: ExecutionStats['healthStatus'] = 'unknown';
+    if (dbStats) {
+      if (dbStats.lastExecution?.status === 'failed') {
+        healthStatus = 'failed';
+      } else if (dbStats.lastRunWithin24h) {
+        healthStatus = 'healthy';
+      } else if (dbStats.totalExecutions > 0) {
+        healthStatus = 'stale';
+      }
+    }
+
+    const stats: ExecutionStats = {
+      totalExecutions: dbStats?.totalExecutions || 0,
+      successfulExecutions: dbStats?.successfulExecutions || 0,
+      failedExecutions: dbStats?.failedExecutions || 0,
+      recentSuccessRate: dbStats?.recentSuccessRate || 0,
+      lastRunWithin24h: dbStats?.lastRunWithin24h || false,
+      lastAudienceSize: dbStats?.lastExecution?.audienceSize || 0,
+      healthStatus,
+    };
+
+    return {
+      history: data.data.history || [],
+      stats,
+    };
   } catch (error) {
     console.error('Error fetching execution history:', error);
-    return [];
+    return {
+      history: [],
+      stats: {
+        totalExecutions: 0,
+        successfulExecutions: 0,
+        failedExecutions: 0,
+        recentSuccessRate: 0,
+        lastRunWithin24h: false,
+        lastAudienceSize: 0,
+        healthStatus: 'unknown',
+      },
+    };
   }
 }
 
@@ -150,7 +162,7 @@ export default async function AutomationDetailPage({ params }: PageProps) {
     notFound();
   }
 
-  const executionHistory = await fetchExecutionHistory(id);
+  const { history: executionHistory, stats: executionStats } = await fetchExecutionHistory(id);
 
   const breadcrumbs = [
     { label: 'Dashboard', href: '/' },
@@ -166,6 +178,7 @@ export default async function AutomationDetailPage({ params }: PageProps) {
         <AutomationDetailClient
           automation={automation}
           initialExecutionHistory={executionHistory}
+          executionStats={executionStats}
         />
       </Suspense>
     </div>

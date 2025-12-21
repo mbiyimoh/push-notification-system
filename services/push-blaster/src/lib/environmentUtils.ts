@@ -31,12 +31,65 @@ export function getPushBlasterUrl(): string {
 }
 
 /**
- * Get the generated CSVs directory path, handling both Railway and local dev.
- * Railway: /app/generated_csvs (where process.cwd() = /app)
- * Local: ../../generated_csvs (relative to push-blaster monorepo location)
+ * Get all possible CSV directories that may contain generated audience files.
+ * Different scripts output to different locations, so callers should search all.
+ *
+ * Returns array of existing directories in priority order:
+ * 1. Local development (monorepo): ../../generated_csvs (Python waterfall scripts)
+ * 2. V2 Generator output: .script-outputs (TypeScript generators, Layer 3)
+ * 3. Railway deployment: /app/generated_csvs
+ */
+export function getAllGeneratedCsvsDirs(): string[] {
+  const projectRoot = process.cwd();
+  const dirs: string[] = [];
+
+  // Local development (monorepo): Python waterfall scripts output here
+  const localPath = path.join(projectRoot, '..', '..', 'generated_csvs');
+  if (fs.existsSync(localPath)) {
+    dirs.push(localPath);
+  }
+
+  // V2 TypeScript Generator: Layer 3 scripts output here
+  const v2GeneratorPath = path.join(projectRoot, '.script-outputs');
+  if (fs.existsSync(v2GeneratorPath)) {
+    dirs.push(v2GeneratorPath);
+  }
+
+  // Railway deployment: CSVs are at /app/generated_csvs
+  const railwayPath = path.join(projectRoot, 'generated_csvs');
+  if (fs.existsSync(railwayPath)) {
+    dirs.push(railwayPath);
+  }
+
+  return dirs;
+}
+
+/**
+ * Get the generated CSVs directory path, handling Railway, local dev, and V2 generator.
+ *
+ * NOTE: Different scripts output to different directories. For comprehensive search,
+ * use getAllGeneratedCsvsDirs() instead and search all returned directories.
+ *
+ * Priority order:
+ * 1. Local development (monorepo): ../../generated_csvs (Python waterfall scripts)
+ * 2. V2 Generator output: .script-outputs (used by TypeScript generators)
+ * 3. Railway deployment: /app/generated_csvs
  */
 export function getGeneratedCsvsDir(): string {
   const projectRoot = process.cwd();
+
+  // Local development (monorepo): Python waterfall scripts output here
+  // Check this FIRST since waterfall scripts are more common now
+  const localPath = path.join(projectRoot, '..', '..', 'generated_csvs');
+  if (fs.existsSync(localPath)) {
+    return localPath;
+  }
+
+  // V2 TypeScript Generator: CSVs are at .script-outputs
+  const v2GeneratorPath = path.join(projectRoot, '.script-outputs');
+  if (fs.existsSync(v2GeneratorPath)) {
+    return v2GeneratorPath;
+  }
 
   // Railway deployment: CSVs are at /app/generated_csvs
   const railwayPath = path.join(projectRoot, 'generated_csvs');
@@ -44,12 +97,6 @@ export function getGeneratedCsvsDir(): string {
     return railwayPath;
   }
 
-  // Local development (monorepo): CSVs are at ../../generated_csvs
-  const localPath = path.join(projectRoot, '..', '..', 'generated_csvs');
-  if (fs.existsSync(localPath)) {
-    return localPath;
-  }
-
-  // Fallback - return the Railway path and let caller handle missing dir
-  return railwayPath;
+  // Fallback - return the local path and let caller handle missing dir
+  return localPath;
 }

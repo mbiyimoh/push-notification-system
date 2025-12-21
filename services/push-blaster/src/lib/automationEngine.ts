@@ -2,6 +2,7 @@
 // Core orchestrator for all automation types building on existing push-blaster patterns
 
 import * as cron from 'node-cron';
+import { v4 as uuidv4 } from 'uuid';
 import {
   UniversalAutomation,
   ExecutionConfig,
@@ -13,6 +14,7 @@ import {
 import pool from '@/lib/db';
 import { emitExecutionLog, emitExecutionProgress } from '@/lib/executionEventEmitter';
 import { generatorRegistry, GeneratorOptions } from '@/lib/generators';
+import * as executionProgressDB from '@/lib/executionProgressDB';
 
 // Feature flag for V1 (Python) vs V2 (TypeScript) audience generation
 const AUTOMATION_ENGINE_VERSION = process.env.AUTOMATION_ENGINE_VERSION ?? 'v1';
@@ -309,20 +311,23 @@ export class AutomationEngine {
   /**
    * Execute automation timeline (30-minute lead time process)
    */
-  private async executeAutomation(automationId: string): Promise<void> {
+  private async executeAutomation(automationId: string, providedExecutionId?: string): Promise<void> {
     const startTime = new Date();
     let executionRecordId = '';
+    // Use provided execution ID or generate a new one
+    const executionId = providedExecutionId || uuidv4();
 
     // [EXEC-START] - Debug checkpoint 2: Execution entry point
     console.log(`[EXEC-START] ═══════════════════════════════════════════════════════════════`);
     console.log(`[EXEC-START] Starting execution for automation: ${automationId}`);
+    console.log(`[EXEC-START] Execution ID: ${executionId}`);
     console.log(`[EXEC-START] Start time: ${startTime.toISOString()}`);
     console.log(`[EXEC-START] Instance ID: ${this.instanceId}`);
     console.log(`[EXEC-START] ═══════════════════════════════════════════════════════════════`);
 
-    // Emit progress event for UI
-    emitExecutionProgress(automationId, automationId, 'starting', 'init', 'Starting execution...');
-    emitExecutionLog(automationId, automationId, 'init', `Execution started at ${startTime.toISOString()}`, 'info');
+    // Emit progress event for UI (SSE - legacy, kept for backwards compatibility)
+    emitExecutionProgress(automationId, executionId, 'starting', 'init', 'Starting execution...');
+    emitExecutionLog(automationId, executionId, 'init', `Execution started at ${startTime.toISOString()}`, 'info');
 
     try {
       this.log(`Starting execution timeline for automation: ${automationId}`);
@@ -338,10 +343,16 @@ export class AutomationEngine {
       console.log(`[EXEC-START] Test mode: ${automation.audienceCriteria?.testMode ?? false}`);
       console.log(`[EXEC-START] Push count: ${automation.pushSequence.length}`);
 
-      emitExecutionLog(automationId, automationId, 'init', `Loaded automation: ${automation.name}`, 'success');
-      emitExecutionLog(automationId, automationId, 'init', `Test mode: ${automation.audienceCriteria?.testMode ?? false}, Push count: ${automation.pushSequence.length}`, 'info');
+      // Start tracking in polling database (for reliable long-running execution monitoring)
+      await executionProgressDB.startExecution(executionId, automationId, automation.name, this.instanceId);
+      await executionProgressDB.appendLog(executionId, automationId, 'info', 'init', `Execution started at ${startTime.toISOString()}`);
+      await executionProgressDB.appendLog(executionId, automationId, 'success', 'init', `Loaded automation: ${automation.name}`);
+      await executionProgressDB.appendLog(executionId, automationId, 'info', 'init', `Test mode: ${automation.audienceCriteria?.testMode ?? false}, Push count: ${automation.pushSequence.length}`);
 
-      // Track execution start in database
+      emitExecutionLog(automationId, executionId, 'init', `Loaded automation: ${automation.name}`, 'success');
+      emitExecutionLog(automationId, executionId, 'init', `Test mode: ${automation.audienceCriteria?.testMode ?? false}, Push count: ${automation.pushSequence.length}`, 'info');
+
+      // Track execution start in main database (for historical records)
       console.log(`[EXEC-START] Starting database tracking...`);
       executionRecordId = await this.trackExecutionStart(
         automation.id,
@@ -383,10 +394,11 @@ export class AutomationEngine {
 
       try {
         // Execute the timeline (with abort signal)
-        await this.executeTimeline(automation, executionConfig, abortController.signal, executionRecordId);
+        await this.executeTimeline(automation, executionConfig, abortController.signal, executionRecordId, executionId);
 
-        // Track successful completion
+        // Track successful completion in both databases
         await this.trackExecutionComplete(executionRecordId, 'completed', metrics, startTime);
+        await executionProgressDB.completeExecution(executionId, 'completed', 'complete', 'Automation completed successfully');
 
         this.log(`Completed execution for automation: ${automationId}`);
       } catch (error: unknown) {
@@ -394,11 +406,13 @@ export class AutomationEngine {
         metrics.errorMessage = error instanceof Error ? error.message : String(error);
         metrics.errorStack = error instanceof Error ? error.stack : undefined;
         await this.trackExecutionComplete(executionRecordId, 'failed', metrics, startTime);
+        await executionProgressDB.completeExecution(executionId, 'failed', 'error', metrics.errorMessage);
 
         // Emit failure events to SSE stream
         const errorMsg = error instanceof Error ? error.message : String(error);
-        emitExecutionLog(automationId, executionRecordId, 'error', `Execution failed: ${errorMsg}`, 'error');
-        emitExecutionProgress(automationId, executionRecordId, 'failed', 'error', `Execution failed: ${errorMsg}`);
+        emitExecutionLog(automationId, executionId, 'error', `Execution failed: ${errorMsg}`, 'error');
+        emitExecutionProgress(automationId, executionId, 'failed', 'error', `Execution failed: ${errorMsg}`);
+        await executionProgressDB.appendLog(executionId, automationId, 'error', 'error', `Execution failed: ${errorMsg}`);
 
         throw error; // Re-throw to be caught by outer catch
       } finally {
@@ -419,7 +433,8 @@ export class AutomationEngine {
     automation: UniversalAutomation,
     executionConfig: ExecutionConfig,
     abortSignal: AbortSignal | undefined,
-    executionRecordId: string
+    executionRecordId: string,
+    executionId: string
   ): Promise<void> {
     const startTime = new Date();
 
@@ -442,32 +457,39 @@ export class AutomationEngine {
       // Phase 1: Audience Generation (T-30 minutes)
       console.log(`[TIMELINE] === PHASE 1: AUDIENCE GENERATION ===`);
       console.log(`[TIMELINE] Phase 1 entry at ${new Date().toISOString()}`);
-      emitExecutionProgress(automation.id, executionRecordId, 'running', 'audience_generation', 'Generating audience...', { current: 1, total: 5 });
-      emitExecutionLog(automation.id, executionRecordId, 'audience_generation', 'Starting audience generation phase', 'info');
+      emitExecutionProgress(automation.id, executionId, 'running', 'audience_generation', 'Generating audience...', { current: 1, total: 5 });
+      emitExecutionLog(automation.id, executionId, 'audience_generation', 'Starting audience generation phase', 'info');
+      await executionProgressDB.updateProgress(executionId, 'running', 'audience_generation', 'Generating audience...', { current: 1, total: 5 });
+      await executionProgressDB.appendLog(executionId, automation.id, 'info', 'audience_generation', 'Starting audience generation phase');
       await this.trackExecutionPhase(executionRecordId, 'audience_generation');
       this.updateExecutionPhase(automation.id, 'audience_generation');
       this.checkAbortSignal(abortSignal, automation.id);
       console.log(`[TIMELINE] Calling generatePushAudience() for ${automation.pushSequence.length} pushes`);
-      emitExecutionLog(automation.id, executionRecordId, 'audience_generation', `Generating audience for ${automation.pushSequence.length} push(es)`, 'info');
+      emitExecutionLog(automation.id, executionId, 'audience_generation', `Generating audience for ${automation.pushSequence.length} push(es)`, 'info');
+      await executionProgressDB.appendLog(executionId, automation.id, 'info', 'audience_generation', `Generating audience for ${automation.pushSequence.length} push(es)`);
       this.log(`📊 PHASE 1: Starting audience generation phase`);
       await this.executeAudienceGeneration(automation, executionConfig);
       console.log(`[TIMELINE] Phase 1 complete at ${new Date().toISOString()}`);
-      emitExecutionLog(automation.id, executionRecordId, 'audience_generation', 'Audience generation completed successfully', 'success');
+      emitExecutionLog(automation.id, executionId, 'audience_generation', 'Audience generation completed successfully', 'success');
+      await executionProgressDB.appendLog(executionId, automation.id, 'success', 'audience_generation', 'Audience generation completed successfully');
       this.log(`✅ PHASE 1: Audience generation completed successfully`);
 
       // Phase 2: Test Push Sending (T-25 minutes)
       console.log(`[TIMELINE] === PHASE 2: TEST SENDING ===`);
       console.log(`[TIMELINE] Phase 2 entry at ${new Date().toISOString()}`);
       console.log(`[TIMELINE] dryRunFirst: ${automation.settings.dryRunFirst}`);
-      emitExecutionProgress(automation.id, executionRecordId, 'running', 'test_sending', 'Sending test push...', { current: 2, total: 5 });
-      emitExecutionLog(automation.id, executionRecordId, 'test_sending', `Starting test push phase (dryRunFirst: ${automation.settings.dryRunFirst})`, 'info');
+      emitExecutionProgress(automation.id, executionId, 'running', 'test_sending', 'Sending test push...', { current: 2, total: 5 });
+      emitExecutionLog(automation.id, executionId, 'test_sending', `Starting test push phase (dryRunFirst: ${automation.settings.dryRunFirst})`, 'info');
+      await executionProgressDB.updateProgress(executionId, 'running', 'test_sending', 'Sending test push...', { current: 2, total: 5 });
+      await executionProgressDB.appendLog(executionId, automation.id, 'info', 'test_sending', `Starting test push phase (dryRunFirst: ${automation.settings.dryRunFirst})`);
       await this.trackExecutionPhase(executionRecordId, 'test_sending');
       this.updateExecutionPhase(automation.id, 'test_sending');
       this.checkAbortSignal(abortSignal, automation.id);
       this.log(`🧪 PHASE 2: Starting test push sending phase`);
       await this.executeTestSending(automation, executionConfig);
       console.log(`[TIMELINE] Phase 2 complete at ${new Date().toISOString()}`);
-      emitExecutionLog(automation.id, executionRecordId, 'test_sending', 'Test push completed', 'success');
+      emitExecutionLog(automation.id, executionId, 'test_sending', 'Test push completed', 'success');
+      await executionProgressDB.appendLog(executionId, automation.id, 'success', 'test_sending', 'Test push completed');
       this.log(`✅ PHASE 2: Test push sending completed successfully`);
 
       // Phase 3: Cancellation Window (T-25 to T-0)
@@ -475,15 +497,18 @@ export class AutomationEngine {
       console.log(`[TIMELINE] Phase 3 entry at ${new Date().toISOString()}`);
       console.log(`[TIMELINE] Window duration: ${this.getCancellationWindowMinutes(automation)} minutes`);
       console.log(`[TIMELINE] Deadline: ${executionConfig.cancellationDeadline}`);
-      emitExecutionProgress(automation.id, executionRecordId, 'running', 'cancellation_window', 'Cancellation window active...', { current: 3, total: 5 });
-      emitExecutionLog(automation.id, executionRecordId, 'cancellation_window', `Cancellation window: ${this.getCancellationWindowMinutes(automation)} minutes`, 'info');
+      emitExecutionProgress(automation.id, executionId, 'running', 'cancellation_window', 'Cancellation window active...', { current: 3, total: 5 });
+      emitExecutionLog(automation.id, executionId, 'cancellation_window', `Cancellation window: ${this.getCancellationWindowMinutes(automation)} minutes`, 'info');
+      await executionProgressDB.updateProgress(executionId, 'running', 'cancellation_window', `Cancellation window: ${this.getCancellationWindowMinutes(automation)} minutes`, { current: 3, total: 5 });
+      await executionProgressDB.appendLog(executionId, automation.id, 'info', 'cancellation_window', `Cancellation window: ${this.getCancellationWindowMinutes(automation)} minutes`);
       await this.trackExecutionPhase(executionRecordId, 'cancellation_window');
       this.updateExecutionPhase(automation.id, 'cancellation_window');
       this.checkAbortSignal(abortSignal, automation.id);
       this.log(`⏳ PHASE 3: Starting cancellation window (until ${this.formatTime(new Date(executionConfig.cancellationDeadline))})`);
       await this.executeCancellationWindow(automation, executionConfig);
       console.log(`[TIMELINE] Phase 3 complete - proceeding to live at ${new Date().toISOString()}`);
-      emitExecutionLog(automation.id, executionRecordId, 'cancellation_window', 'Cancellation window closed - proceeding to live send', 'success');
+      emitExecutionLog(automation.id, executionId, 'cancellation_window', 'Cancellation window closed - proceeding to live send', 'success');
+      await executionProgressDB.appendLog(executionId, automation.id, 'success', 'cancellation_window', 'Cancellation window closed - proceeding to live send');
       this.log(`✅ PHASE 3: Cancellation window completed - proceeding to live execution`);
 
       // Phase 4: Live Execution (T-0)
@@ -492,37 +517,44 @@ export class AutomationEngine {
       const isTestMode = this.isTestMode(automation);
       const mode = isTestMode ? 'real-dry-run' : 'live-send';
       console.log(`[TIMELINE] Mode: ${mode} (test mode: ${isTestMode})`);
-      emitExecutionProgress(automation.id, executionRecordId, 'running', 'live_execution', 'Sending push notifications...', { current: 4, total: 5 });
-      emitExecutionLog(automation.id, executionRecordId, 'live_execution', `Starting live execution (mode: ${mode})`, 'info');
+      emitExecutionProgress(automation.id, executionId, 'running', 'live_execution', 'Sending push notifications...', { current: 4, total: 5 });
+      emitExecutionLog(automation.id, executionId, 'live_execution', `Starting live execution (mode: ${mode})`, 'info');
+      await executionProgressDB.updateProgress(executionId, 'running', 'live_execution', 'Sending push notifications...', { current: 4, total: 5 });
+      await executionProgressDB.appendLog(executionId, automation.id, 'info', 'live_execution', `Starting live execution (mode: ${mode})`);
       await this.trackExecutionPhase(executionRecordId, 'live_execution');
       this.updateExecutionPhase(automation.id, 'live_execution');
       this.checkAbortSignal(abortSignal, automation.id);
       this.log(`🔴 PHASE 4: Starting live execution phase`);
       await this.executeLiveSending(automation, executionConfig);
       console.log(`[TIMELINE] Phase 4 complete at ${new Date().toISOString()}`);
-      emitExecutionLog(automation.id, executionRecordId, 'live_execution', 'Live execution completed successfully', 'success');
+      emitExecutionLog(automation.id, executionId, 'live_execution', 'Live execution completed successfully', 'success');
+      await executionProgressDB.appendLog(executionId, automation.id, 'success', 'live_execution', 'Live execution completed successfully');
       this.log(`✅ PHASE 4: Live execution completed successfully`);
 
       // Phase 5: Cleanup (for test automations)
       console.log(`[TIMELINE] === PHASE 5: CLEANUP ===`);
       console.log(`[TIMELINE] Phase 5 entry at ${new Date().toISOString()}`);
-      emitExecutionProgress(automation.id, executionRecordId, 'running', 'cleanup', 'Running cleanup...', { current: 5, total: 5 });
-      emitExecutionLog(automation.id, executionRecordId, 'cleanup', 'Starting cleanup phase', 'info');
+      emitExecutionProgress(automation.id, executionId, 'running', 'cleanup', 'Running cleanup...', { current: 5, total: 5 });
+      emitExecutionLog(automation.id, executionId, 'cleanup', 'Starting cleanup phase', 'info');
+      await executionProgressDB.updateProgress(executionId, 'running', 'cleanup', 'Running cleanup...', { current: 5, total: 5 });
+      await executionProgressDB.appendLog(executionId, automation.id, 'info', 'cleanup', 'Starting cleanup phase');
       await this.trackExecutionPhase(executionRecordId, 'cleanup');
       this.updateExecutionPhase(automation.id, 'cleanup');
       this.checkAbortSignal(abortSignal, automation.id);
       this.log(`🧹 PHASE 5: Starting cleanup phase`);
       await this.executeCleanup(automation, executionConfig);
       console.log(`[TIMELINE] Phase 5 complete at ${new Date().toISOString()}`);
-      emitExecutionLog(automation.id, executionRecordId, 'cleanup', 'Cleanup completed successfully', 'success');
+      emitExecutionLog(automation.id, executionId, 'cleanup', 'Cleanup completed successfully', 'success');
+      await executionProgressDB.appendLog(executionId, automation.id, 'success', 'cleanup', 'Cleanup completed successfully');
       this.log(`✅ PHASE 5: Cleanup completed successfully`);
 
       const totalDuration = Date.now() - startTime.getTime();
       this.log(`🎉 TIMELINE COMPLETE: Total execution time ${Math.round(totalDuration / 1000)}s`);
 
       // Emit completion events
-      emitExecutionLog(automation.id, executionRecordId, 'complete', `Execution completed in ${Math.round(totalDuration / 1000)}s`, 'success');
-      emitExecutionProgress(automation.id, executionRecordId, 'completed', 'complete', 'Automation completed successfully');
+      emitExecutionLog(automation.id, executionId, 'complete', `Execution completed in ${Math.round(totalDuration / 1000)}s`, 'success');
+      emitExecutionProgress(automation.id, executionId, 'completed', 'complete', 'Automation completed successfully');
+      await executionProgressDB.appendLog(executionId, automation.id, 'success', 'complete', `Execution completed in ${Math.round(totalDuration / 1000)}s`);
 
     } catch (error: unknown) {
       const totalDuration = Date.now() - startTime.getTime();
@@ -530,8 +562,9 @@ export class AutomationEngine {
       this.logError(`❌ TIMELINE FAILED: After ${Math.round(totalDuration / 1000)}s - ${errorMessage}`, error);
 
       // Emit failure events
-      emitExecutionLog(automation.id, executionRecordId, 'error', `Execution failed: ${errorMessage}`, 'error');
-      emitExecutionProgress(automation.id, executionRecordId, 'failed', 'error', errorMessage);
+      emitExecutionLog(automation.id, executionId, 'error', `Execution failed: ${errorMessage}`, 'error');
+      emitExecutionProgress(automation.id, executionId, 'failed', 'error', errorMessage);
+      await executionProgressDB.appendLog(executionId, automation.id, 'error', 'error', `Execution failed: ${errorMessage}`);
 
       throw error;
     }
@@ -707,14 +740,18 @@ export class AutomationEngine {
 
   /**
    * Execute live push sending using the PROVEN test-automation API
-   * 
+   *
    * CRITICAL CHANGE: Instead of custom sendLivePush loop, use the same proven API
    * that test pushes use. This ensures identical processing logic and eliminates
    * the architectural divergence that was causing live send failures.
-   * 
+   *
    * NEW: Test Mode Support
    * - Test mode: Executes "real-dry-run" (real audiences but no actual sends)
    * - Real mode: Executes "live-send" (real audiences with actual push delivery)
+   *
+   * CRITICAL FIX: The test-automation API returns an SSE stream. We MUST read the
+   * stream to completion to wait for the actual push sends to finish. Just checking
+   * response.ok only confirms the SSE connection was established, not that sends completed.
    */
   private async executeLiveSending(automation: UniversalAutomation, executionConfig: ExecutionConfig): Promise<void> {
     const isTestMode = this.isTestMode(automation);
@@ -751,9 +788,11 @@ export class AutomationEngine {
       this.log(`🔗 Calling unified test-automation API for ${operation}`);
       this.log(`🔗 API URL: ${apiUrl}`);
 
-      const response = await fetch(apiUrl, {
+      // CRITICAL: Request SSE stream with correct Accept header
+      // Use retry logic for transient network failures
+      const response = await this.fetchWithRetry(apiUrl, {
         method: 'GET',
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 'Accept': 'text/event-stream' }
       });
 
       console.log(`[PHASE-4] API response received at ${new Date().toISOString()}`);
@@ -765,10 +804,20 @@ export class AutomationEngine {
         throw new Error(`${operation} API failed: ${response.status} ${response.statusText}`);
       }
 
-      // Note: The test-automation API uses Server-Sent Events, but we don't need to parse them
-      // for this automation flow. The API will handle the complete execution pipeline.
-      console.log(`[PHASE-4] ✅ API call completed successfully`);
-      this.log(`✅ ${operation} API call completed successfully`);
+      // CRITICAL FIX: Read the SSE stream to wait for actual push completion
+      // Use longer timeout for live sends (10 minutes) since real audiences can be large
+      const timeoutMs = 600000; // 10 minutes for live sends
+      console.log(`[PHASE-4] Reading SSE stream (timeout: ${timeoutMs / 1000}s)...`);
+
+      const result = await this.readSSEStream(response, automation.id, timeoutMs);
+
+      if (result.success) {
+        console.log(`[PHASE-4] ✅ ${operation} completed successfully: ${result.message}`);
+        this.log(`✅ ${operation} completed successfully: ${result.message}`);
+      } else {
+        console.log(`[PHASE-4] ❌ ${operation} failed: ${result.message}`);
+        throw new Error(`${operation} failed: ${result.message}`);
+      }
 
       executionConfig.currentPhase = 'completed';
       this.log(`🎉 ${operation} completed successfully for automation: ${automation.id}`);
@@ -1147,10 +1196,64 @@ export class AutomationEngine {
   }
 
   /**
+   * Helper to fetch with retry for transient network failures
+   * Retries on connection errors, timeouts, and 5xx server errors
+   */
+  private async fetchWithRetry(
+    url: string,
+    options: RequestInit,
+    maxRetries: number = 3,
+    retryDelayMs: number = 2000
+  ): Promise<Response> {
+    let lastError: Error | null = null;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(`[FETCH-RETRY] Attempt ${attempt}/${maxRetries} for ${url}`);
+        const response = await fetch(url, options);
+
+        // Retry on 5xx server errors
+        if (response.status >= 500 && attempt < maxRetries) {
+          console.log(`[FETCH-RETRY] Server error ${response.status}, retrying in ${retryDelayMs}ms...`);
+          await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+          continue;
+        }
+
+        return response;
+      } catch (error: unknown) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        const errorMessage = lastError.message;
+
+        // Check if it's a retryable network error
+        const isRetryable = errorMessage.includes('ECONNREFUSED') ||
+          errorMessage.includes('ECONNRESET') ||
+          errorMessage.includes('ETIMEDOUT') ||
+          errorMessage.includes('fetch failed') ||
+          errorMessage.includes('network');
+
+        if (isRetryable && attempt < maxRetries) {
+          console.log(`[FETCH-RETRY] Network error: ${errorMessage}, retrying in ${retryDelayMs}ms...`);
+          await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+          continue;
+        }
+
+        throw lastError;
+      }
+    }
+
+    throw lastError || new Error('Fetch failed after all retries');
+  }
+
+  /**
    * Send test push sequence to configured test users
-   * 
+   *
    * CRITICAL FIX: This method calls the test API ONCE for the entire automation
    * The test API processes all pushes in the sequence, so we only need one call
+   *
+   * The test API returns a Server-Sent Events (SSE) stream, so we need to:
+   * 1. Connect to the stream
+   * 2. Read all events until we get a 'result' or 'error' event
+   * 3. Parse the final result to determine success/failure
    */
   private async sendTestPushSequence(automation: UniversalAutomation): Promise<void> {
     this.log(`🧪 Sending test sequence for automation: ${automation.id} (${automation.pushSequence.length} pushes)`);
@@ -1163,25 +1266,125 @@ export class AutomationEngine {
       console.log(`[TEST-SEND] Base URL: ${baseUrl}`);
       console.log(`[TEST-SEND] Full API URL: ${apiUrl}`);
 
-      // Call the test-automation API for TEST audience - processes ENTIRE sequence
-      const response = await fetch(apiUrl, {
+      // Call the test-automation API for TEST audience - returns SSE stream
+      // Use retry logic for transient network failures
+      const response = await this.fetchWithRetry(apiUrl, {
         method: 'GET',
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 'Accept': 'text/event-stream' }
       });
 
       console.log(`[TEST-SEND] Response status: ${response.status}`);
 
-      if (response.ok) {
-        console.log(`[TEST-SEND] ✅ Test sequence completed successfully`);
+      if (!response.ok) {
+        console.log(`[TEST-SEND] ❌ Test sequence failed: ${response.status}`);
+        throw new Error(`Test sequence failed: HTTP ${response.status}`);
+      }
+
+      // Read the SSE stream and wait for the final result
+      const result = await this.readSSEStream(response, automation.id);
+
+      if (result.success) {
+        console.log(`[TEST-SEND] ✅ Test sequence completed successfully: ${result.message}`);
         this.log(`✅ Successfully sent test sequence: ${automation.pushSequence.length} pushes to test audience`);
       } else {
-        console.log(`[TEST-SEND] ❌ Test sequence failed: ${response.status}`);
-        throw new Error(`Test sequence failed: ${response.status}`);
+        console.log(`[TEST-SEND] ❌ Test sequence failed: ${result.message}`);
+        throw new Error(`Test sequence failed: ${result.message}`);
       }
     } catch (error: unknown) {
       console.log(`[TEST-SEND] ❌ FAILED: ${error instanceof Error ? error.message : String(error)}`);
       this.logError(`Failed to send test sequence for automation ${automation.id}`, error);
       throw error;
+    }
+  }
+
+  /**
+   * Read Server-Sent Events stream and wait for the final result
+   * Returns the final result event (success or error)
+   *
+   * @param response - The fetch response containing the SSE stream
+   * @param automationId - The automation ID for logging context
+   * @param timeoutMs - Maximum time to wait for completion (default 5 minutes for test, 10 for live)
+   */
+  private async readSSEStream(
+    response: Response,
+    automationId: string,
+    timeoutMs: number = 300000 // 5 minutes default
+  ): Promise<{ success: boolean; message: string }> {
+    const reader = response.body?.getReader();
+    if (!reader) {
+      throw new Error('Response body is not readable');
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    // Create timeout controller to prevent infinite hangs
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    let timedOut = false;
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => {
+        timedOut = true;
+        console.error(`[TEST-SEND-SSE] Stream timeout after ${timeoutMs}ms for automation ${automationId}`);
+        reject(new Error(`SSE stream timeout after ${timeoutMs}ms - test API may have hung`));
+      }, timeoutMs);
+    });
+
+    try {
+      while (true) {
+        // Race between reading next chunk and timeout
+        const readPromise = reader.read();
+        const { done, value } = await Promise.race([readPromise, timeoutPromise]);
+
+        if (done) {
+          console.log(`[TEST-SEND-SSE] Stream ended without final result`);
+          return { success: false, message: 'Stream ended unexpectedly without final result' };
+        }
+
+        buffer += decoder.decode(value, { stream: true });
+
+        // Process complete SSE events (separated by double newlines)
+        const events = buffer.split('\n\n');
+        buffer = events.pop() || ''; // Keep incomplete event in buffer
+
+        for (const event of events) {
+          if (!event.trim()) continue;
+
+          // Parse SSE data line
+          const dataMatch = event.match(/^data:\s*(.+)$/m);
+          if (!dataMatch) continue;
+
+          try {
+            const data = JSON.parse(dataMatch[1]);
+
+            // Log progress events
+            if (data.type === 'log') {
+              const level = data.level || 'info';
+              const stage = data.stage || '';
+              const message = data.message || '';
+              console.log(`[TEST-SEND-SSE] [${level.toUpperCase()}] [${stage}] ${message}`);
+            }
+
+            // Handle final result event
+            if (data.type === 'result') {
+              console.log(`[TEST-SEND-SSE] Received final result: success=${data.success}, message=${data.message}`);
+              return { success: data.success, message: data.message || 'No message provided' };
+            }
+
+            // Handle error event
+            if (data.type === 'error') {
+              console.log(`[TEST-SEND-SSE] Received error: ${data.message}`);
+              return { success: false, message: data.message || 'Unknown error' };
+            }
+          } catch {
+            // Ignore parse errors for non-JSON events (like heartbeats)
+          }
+        }
+      }
+    } finally {
+      // Always clear timeout and release reader lock
+      if (timeoutId) clearTimeout(timeoutId);
+      reader.releaseLock();
     }
   }
 
@@ -1280,11 +1483,15 @@ export class AutomationEngine {
     return this.cancelAutomation(automationId, 'Emergency stop activated');
   }
 
-  async executeAutomationNow(automation: UniversalAutomation): Promise<{ success: boolean; message: string; executionId?: string }> {
+  async executeAutomationNow(automation: UniversalAutomation, providedExecutionId?: string): Promise<{ success: boolean; message: string; executionId?: string }> {
+    // Generate execution ID if not provided
+    const executionId = providedExecutionId || uuidv4();
+
     // [EXEC-NOW] - Debug checkpoint: Manual execution entry point
     console.log(`[EXEC-NOW] ═══════════════════════════════════════════════════════════════`);
     console.log(`[EXEC-NOW] Manual execution requested: ${automation.id}`);
     console.log(`[EXEC-NOW] Automation name: ${automation.name}`);
+    console.log(`[EXEC-NOW] Execution ID: ${executionId}`);
     console.log(`[EXEC-NOW] Timestamp: ${new Date().toISOString()}`);
     console.log(`[EXEC-NOW] ═══════════════════════════════════════════════════════════════`);
 
@@ -1303,15 +1510,15 @@ export class AutomationEngine {
         };
       }
 
-      // Execute the automation
+      // Execute the automation with the execution ID
       console.log(`[EXEC-NOW] ✅ Delegating to executeAutomation()`);
-      await this.executeAutomation(automation.id);
+      await this.executeAutomation(automation.id, executionId);
 
       console.log(`[EXEC-NOW] ✅ executeAutomation() completed successfully`);
       return {
         success: true,
         message: 'Automation execution started successfully',
-        executionId: automation.id
+        executionId: executionId
       };
     } catch (error: unknown) {
       console.log(`[EXEC-NOW] ❌ FAILED: ${error instanceof Error ? error.message : String(error)}`);

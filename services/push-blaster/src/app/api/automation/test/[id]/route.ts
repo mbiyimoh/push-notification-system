@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic';
 
 import { NextRequest, NextResponse } from 'next/server';
 import { registerRunningTest, unregisterRunningTest } from '@/lib/testProcessManager';
-import { getCadenceServiceUrl, getGeneratedCsvsDir } from '@/lib/environmentUtils';
+import { getCadenceServiceUrl, getGeneratedCsvsDir, getAllGeneratedCsvsDirs } from '@/lib/environmentUtils';
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -176,9 +176,16 @@ async function executeTest(
     sendLog('success', `Loaded automation: ${automation.name}`, 'CONFIG');
     sendLog('info', `Found ${automation.pushSequence.length} pushes in sequence`, 'CONFIG');
 
-    // Step 2: Execute script to generate CSVs
-    if (automation.audienceCriteria?.customScript) {
-      sendLog('info', 'Executing audience generation script...', 'SCRIPT');
+    // Step 2: Check for existing V2-generated CSVs before running scripts
+    // The V2 TypeScript generator creates CSVs in .script-outputs/ during automation execution
+    // For test mode, we can reuse these if they exist and are recent (within 30 minutes)
+    const existingCsvs = await checkForExistingCsvs(mode, sendLog);
+
+    if (existingCsvs.found) {
+      sendLog('success', `Found ${existingCsvs.count} existing V2-generated CSV files (skipping script execution)`, 'SCRIPT');
+    } else if (automation.audienceCriteria?.customScript) {
+      // Only run Python script if no recent V2-generated CSVs exist
+      sendLog('info', 'No recent V2-generated CSVs found, executing audience generation script...', 'SCRIPT');
       const scriptResult = await executeScript(automation.audienceCriteria.customScript, sendLog, automationId, mode);
       if (!scriptResult.success) {
         return sendError(`Script execution failed: ${scriptResult.message}`);
@@ -278,6 +285,64 @@ async function loadAutomation(automationId: string) {
   }
 }
 
+// Helper function to check for existing V2-generated CSVs
+// V2 TypeScript generators create CSVs during automation execution
+// We can reuse these for test mode instead of running Python scripts
+async function checkForExistingCsvs(
+  mode: string,
+  sendLog: SendLogFunction
+): Promise<{ found: boolean; count: number }> {
+  const fs = require('fs');
+  const path = require('path');
+
+  const generatedCsvsDir = getGeneratedCsvsDir();
+
+  if (!fs.existsSync(generatedCsvsDir)) {
+    sendLog('info', `CSV directory not found: ${generatedCsvsDir}`, 'SCRIPT');
+    return { found: false, count: 0 };
+  }
+
+  const audienceType = mode.startsWith('test-') ? 'TEST' : 'REAL';
+  const now = Date.now();
+  const MAX_AGE_MS = 30 * 60 * 1000; // 30 minutes
+
+  // Get all CSV files and check if they're recent
+  const allFiles = fs.readdirSync(generatedCsvsDir);
+  const matchingFiles = allFiles.filter((file: string) => {
+    if (!file.endsWith('.csv')) return false;
+
+    // For TEST mode, look for files with _TEST_
+    // For REAL mode, look for files without _TEST_
+    const isTestFile = file.includes('_TEST_');
+    const wantTestFile = audienceType === 'TEST';
+
+    if (isTestFile !== wantTestFile) return false;
+
+    // Check if file is recent (within 30 minutes)
+    try {
+      const filePath = path.join(generatedCsvsDir, file);
+      const stats = fs.statSync(filePath);
+      const fileAge = now - stats.mtime.getTime();
+      return fileAge < MAX_AGE_MS;
+    } catch {
+      return false;
+    }
+  });
+
+  // Look for the expected audience files
+  const expectedPatterns = ['offer-creators', 'closet-adders', 'wishlist-adders'];
+  const foundPatterns = expectedPatterns.filter(pattern =>
+    matchingFiles.some((file: string) => file.includes(pattern))
+  );
+
+  if (foundPatterns.length >= 2) {
+    sendLog('info', `Found recent ${audienceType} CSV files in ${generatedCsvsDir}`, 'SCRIPT');
+    return { found: true, count: matchingFiles.length };
+  }
+
+  return { found: false, count: 0 };
+}
+
 // Helper function to execute script
 async function executeScript(scriptConfig: CustomScript, sendLog: SendLogFunction, automationId?: string, mode?: string): Promise<ScriptResult> {
   const fs = require('fs');
@@ -353,68 +418,80 @@ async function filterAudiences(automation: Automation, audienceType: 'TEST' | 'R
   const Papa = require('papaparse');
 
   const audiences: AudienceInfo[] = [];
-  const generatedCsvsDir = getGeneratedCsvsDir();
 
-  // Check if generated_csvs directory exists
-  if (!fs.existsSync(generatedCsvsDir)) {
-    sendLog('error', `Generated CSVs directory not found: ${generatedCsvsDir}. Checked: ${process.cwd()}/generated_csvs and ${process.cwd()}/../../generated_csvs`, 'FILTER');
+  // Get all possible CSV directories (different scripts output to different locations)
+  const allCsvDirs = getAllGeneratedCsvsDirs();
+
+  if (allCsvDirs.length === 0) {
+    sendLog('error', `No generated CSVs directories found. Checked multiple locations.`, 'FILTER');
     return audiences;
   }
 
-  sendLog('info', `Using generated CSVs directory: ${generatedCsvsDir}`, 'FILTER');
-  
-  // Get all CSV files in the directory and sort by modification time (newest first)
-  const allCsvFiles = fs.readdirSync(generatedCsvsDir)
-    .filter((file: string) => file.endsWith('.csv'))
-    .map((file: string) => ({
-      name: file,
-      mtime: fs.statSync(path.join(generatedCsvsDir, file)).mtime
-    }))
-    .sort((a: FileStats, b: FileStats) => b.mtime.getTime() - a.mtime.getTime())
-    .map((file: FileStats) => file.name);
+  sendLog('info', `Searching ${allCsvDirs.length} CSV directories: ${allCsvDirs.join(', ')}`, 'FILTER');
+
+  // Collect all CSV files from all directories with their full paths
+  interface CsvFileInfo {
+    name: string;
+    fullPath: string;
+    mtime: Date;
+  }
+
+  let allCsvFilesWithPaths: CsvFileInfo[] = [];
+
+  for (const dir of allCsvDirs) {
+    const filesInDir = fs.readdirSync(dir)
+      .filter((file: string) => file.endsWith('.csv'))
+      .map((file: string) => {
+        const fullPath = path.join(dir, file);
+        return {
+          name: file,
+          fullPath,
+          mtime: fs.statSync(fullPath).mtime
+        };
+      });
+    allCsvFilesWithPaths = allCsvFilesWithPaths.concat(filesInDir);
+  }
+
+  // Sort by modification time (newest first)
+  allCsvFilesWithPaths.sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
+
+  sendLog('info', `Found ${allCsvFilesWithPaths.length} total CSV files across all directories`, 'FILTER');
   
     // Detect automation type and create appropriate file mapping
   const isWaterfallScript = automation.audienceCriteria?.customScript?.scriptId === 'generate_new_user_waterfall';
-  
-  let audienceFileMap: Record<string, string | undefined> = {};
-  
+
+  // Helper to find file by pattern - returns the CsvFileInfo object with fullPath
+  const findFile = (testPattern: string, isTestAudience: boolean): CsvFileInfo | undefined => {
+    return allCsvFilesWithPaths.find((f: CsvFileInfo) => {
+      const hasTestMarker = f.name.includes('test') || f.name.includes('TEST');
+      const matchesPattern = f.name.includes(testPattern);
+      return matchesPattern && (isTestAudience ? hasTestMarker : !hasTestMarker);
+    });
+  };
+
+  let audienceFileMap: Record<string, CsvFileInfo | undefined> = {};
+
   if (isWaterfallScript) {
     // Waterfall script generates different file patterns
     audienceFileMap = {
-      'offer-creators': audienceType === 'TEST' 
-        ? allCsvFiles.find((file: string) => file.includes('test') && file.includes('no-shoes-new-user'))
-        : allCsvFiles.find((file: string) => !file.includes('test') && file.includes('no-shoes-new-user')),
-      'closet-adders': audienceType === 'TEST'
-        ? allCsvFiles.find((file: string) => file.includes('test') && file.includes('no-bio-new-user'))
-        : allCsvFiles.find((file: string) => !file.includes('test') && file.includes('no-bio-new-user')),
-      'wishlist-adders': audienceType === 'TEST'
-        ? allCsvFiles.find((file: string) => file.includes('test') && file.includes('no-offers-new-user'))
-        : allCsvFiles.find((file: string) => !file.includes('test') && file.includes('no-offers-new-user')),
-      'new-user-level4': audienceType === 'TEST'
-        ? allCsvFiles.find((file: string) => file.includes('test') && file.includes('no-wishlist-new-user'))
-        : allCsvFiles.find((file: string) => !file.includes('test') && file.includes('no-wishlist-new-user')),
-      'new-user-level5': audienceType === 'TEST'
-        ? allCsvFiles.find((file: string) => file.includes('test') && file.includes('new-stars-new-user'))
-        : allCsvFiles.find((file: string) => !file.includes('test') && file.includes('new-stars-new-user'))
+      'offer-creators': findFile('no-shoes-new-user', audienceType === 'TEST'),
+      'closet-adders': findFile('no-bio-new-user', audienceType === 'TEST'),
+      'wishlist-adders': findFile('no-offers-new-user', audienceType === 'TEST'),
+      'new-user-level4': findFile('no-wishlist-new-user', audienceType === 'TEST'),
+      'new-user-level5': findFile('new-stars-new-user', audienceType === 'TEST')
     };
   } else {
     // Layer 3 script uses traditional file patterns
     audienceFileMap = {
-      'offer-creators': audienceType === 'TEST' 
-        ? allCsvFiles.find((file: string) => file.includes('TEST') && file.includes('offer-creators'))
-        : allCsvFiles.find((file: string) => !file.includes('TEST') && file.includes('offer-creators')),
-      'closet-adders': audienceType === 'TEST'
-        ? allCsvFiles.find((file: string) => file.includes('TEST') && file.includes('closet-adders'))
-        : allCsvFiles.find((file: string) => !file.includes('TEST') && file.includes('closet-adders')),
-      'wishlist-adders': audienceType === 'TEST'
-        ? allCsvFiles.find((file: string) => file.includes('TEST') && file.includes('wishlist-adders'))
-        : allCsvFiles.find((file: string) => !file.includes('TEST') && file.includes('wishlist-adders'))
+      'offer-creators': findFile('offer-creators', audienceType === 'TEST'),
+      'closet-adders': findFile('closet-adders', audienceType === 'TEST'),
+      'wishlist-adders': findFile('wishlist-adders', audienceType === 'TEST')
     };
   }
 
   // Define audience types based on automation type
   let audienceTypes: readonly string[] = [];
-  
+
   if (isWaterfallScript) {
     audienceTypes = ['offer-creators', 'closet-adders', 'wishlist-adders', 'new-user-level4', 'new-user-level5'] as const;
   } else {
@@ -424,30 +501,29 @@ async function filterAudiences(automation: Automation, audienceType: 'TEST' | 'R
   for (let i = 0; i < automation.pushSequence.length; i++) {
     const push = automation.pushSequence[i];
     const audienceName = push.audienceName || 'default';
-    
+
     // Map push sequence index to audience category
     const audienceCategory = audienceTypes[i] || (isWaterfallScript ? 'new-user-level5' : 'offer-creators');
-    
-    // Look for appropriate CSV file
-    let csvFile = audienceFileMap[audienceCategory];
-    let csvFileName = csvFile || `${audienceName}-${audienceType}.csv`;
-    
+
+    // Look for appropriate CSV file (now with full path)
+    const csvFileInfo = audienceFileMap[audienceCategory];
+    const csvFileName = csvFileInfo?.name || `${audienceName}-${audienceType}.csv`;
+
     sendLog('info', `Looking for audience file: ${csvFileName}`, 'FILTER');
     sendLog('info', `Push ${i+1}: mapping to ${audienceCategory} category`, 'FILTER');
-    
+
     let userCount = 0;
-    if (csvFile) {
+    if (csvFileInfo) {
       try {
-        // Load and count actual CSV file
-        const csvPath = path.join(generatedCsvsDir, csvFile);
-        const csvContent = fs.readFileSync(csvPath, 'utf8');
+        // Load and count actual CSV file using fullPath
+        const csvContent = fs.readFileSync(csvFileInfo.fullPath, 'utf8');
         const parseResult = Papa.parse(csvContent, { header: true, skipEmptyLines: true });
         userCount = parseResult.data.length;
 
-        sendLog('success', `Found ${audienceCategory} audience: ${userCount} users`, 'FILTER');
+        sendLog('success', `Found ${audienceCategory} audience: ${userCount} users from ${csvFileInfo.fullPath}`, 'FILTER');
       } catch (error: unknown) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-        sendLog('error', `Failed to load CSV ${csvFile}: ${errorMessage}`, 'FILTER');
+        sendLog('error', `Failed to load CSV ${csvFileInfo.fullPath}: ${errorMessage}`, 'FILTER');
         userCount = 0;
       }
     } else {
@@ -455,16 +531,16 @@ async function filterAudiences(automation: Automation, audienceType: 'TEST' | 'R
       userCount = audienceType === 'TEST' ? 1 : 0;
       sendLog('warning', `CSV file not found for ${audienceCategory}, using fallback: ${userCount} users`, 'FILTER');
     }
-    
+
     audiences.push({
       name: audienceCategory, // Use the specific audience category instead of "default"
       fileName: csvFileName,
       userCount: userCount,
       type: audienceType,
-      csvPath: csvFile ? path.join(generatedCsvsDir, csvFile) : undefined
+      csvPath: csvFileInfo?.fullPath // Use the full path directly
     });
   }
-  
+
   return audiences;
 }
 

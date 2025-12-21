@@ -192,6 +192,13 @@ export class ScriptExecutor {
       // Use process.cwd() for Railway compatibility (works in both Docker and local)
       const projectRoot = process.cwd();
 
+      // Calculate monorepo root for PYTHONPATH (basic_capabilities lives there)
+      // In Docker/Railway: /app (same as projectRoot)
+      // In local dev: ../../ relative to services/push-blaster
+      const monorepoRoot = fs.existsSync(path.join(projectRoot, 'basic_capabilities'))
+        ? projectRoot  // Docker: basic_capabilities is at /app/basic_capabilities
+        : path.resolve(projectRoot, '..', '..');  // Local dev: go up from services/push-blaster
+
       // Get DATABASE_URL - try multiple sources due to Next.js env var handling
       // 1. Direct from process.env (may be inlined at build time)
       // 2. From actual runtime environment (bypass Next.js inlining)
@@ -219,16 +226,19 @@ export class ScriptExecutor {
         ...process.env,
         // Explicitly set DATABASE_URL from our resolved value
         DATABASE_URL: databaseUrl,
-        PYTHONPATH: projectRoot,
+        // PYTHONPATH must include monorepo root for basic_capabilities imports
+        PYTHONPATH: monorepoRoot,
         OUTPUT_PATH: outputPath,
         EXECUTION_ID: executionId,
         ...this.formatScriptParameters(parameters)
       };
 
+      console.log(`[SCRIPTEXECUTOR] Monorepo root (PYTHONPATH): ${monorepoRoot}`);
+
       // Execute the Python script using debug runner
       console.log(`[SCRIPTEXECUTOR] About to call debug runner with executionId: ${executionId}`);
       console.log(`[SCRIPTEXECUTOR] Script path: ${script.scriptPath}`);
-      console.log(`[SCRIPTEXECUTOR] Working directory: ${projectRoot}`);
+      console.log(`[SCRIPTEXECUTOR] Working directory: ${monorepoRoot}`);
       
       const { runPython } = await import('./debugPythonRunner');
       
@@ -249,7 +259,7 @@ export class ScriptExecutor {
         scriptPath: script.scriptPath,
         args,
         env: scriptEnv,
-        cwd: projectRoot,
+        cwd: monorepoRoot,  // Use monorepo root so Python can find basic_capabilities
         executionId
       });
       
@@ -279,15 +289,15 @@ export class ScriptExecutor {
         audienceSize = match ? parseInt(match[1]) : 0;
         console.log(`[DEBUG] Dry run completed with ${audienceSize} users`);
       } else {
-        // For regular runs, check the generated_csvs directory for actual files
-        // Use shared utility for Railway-compatible path resolution
+        // For regular runs, check the CSV output directory for actual files
+        // Use shared utility for path resolution (.script-outputs for V2, generated_csvs for V1)
         const generatedCsvsDir = getGeneratedCsvsDir();
 
         if (!fs.existsSync(generatedCsvsDir)) {
-          throw new Error(`Script did not create the expected generated_csvs directory: ${generatedCsvsDir}`);
+          throw new Error(`Script did not create the expected CSV output directory: ${generatedCsvsDir}`);
         }
 
-        // Find all non-TEST CSV files in the generated_csvs directory
+        // Find all non-TEST CSV files in the output directory
         csvFiles = fs.readdirSync(generatedCsvsDir)
           .filter(file => file.endsWith('.csv') && !file.includes('_TEST_'))
           .map(file => path.join(generatedCsvsDir, file));

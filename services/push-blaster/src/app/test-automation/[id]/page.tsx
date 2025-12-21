@@ -669,7 +669,7 @@ export default function TestAutomationPage() {
                     Run Another Test
                   </Button>
                   <Button
-                    onClick={() => router.push(`/edit-automation/${automationId}`)}
+                    onClick={() => router.push(`/automations/${automationId}/edit`)}
                     className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium"
                   >
                     Edit Automation

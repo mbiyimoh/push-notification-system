@@ -9,7 +9,7 @@
     "timezone": "America/Chicago",
     "frequency": "daily",
     "startDate": "2025-08-16",
-    "executionTime": "14:30",
+    "executionTime": "21:27",
     "leadTimeMinutes": 30
   },
   "template": {
@@ -102,7 +102,9 @@
     }
   },
   "settings": {
-    "testUserIds": [],
+    "testUserIds": [
+      "0e54067c-4c0e-4e4a-8a23-a47661578059"
+    ],
     "emergencyStopEnabled": true,
     "dryRunFirst": true,
     "cancellationWindowMinutes": 30,
@@ -123,5 +125,5 @@
     "failedExecutions": 0
   },
   "createdAt": "2025-08-16T06:03:04.083Z",
-  "updatedAt": "2025-09-08T22:24:57.317Z"
+  "updatedAt": "2025-12-20T02:54:51.960Z"
 }

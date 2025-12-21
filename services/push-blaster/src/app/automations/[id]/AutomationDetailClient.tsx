@@ -11,10 +11,13 @@ import { toast } from 'sonner';
 import { useKeyboardShortcuts } from '@/app/hooks/useKeyboardShortcuts';
 import { ShortcutsHelpModal } from '@/app/components/ui/ShortcutsHelpModal';
 import { ExecutionProgressModal } from '@/app/components/automations/ExecutionProgressModal';
+import { ExecutionProgressInline } from '@/app/components/automations/ExecutionProgressInline';
+import { ExecutionStats } from './page';
 
 interface AutomationDetailClientProps {
   automation: UniversalAutomation;
   initialExecutionHistory: ExecutionLog[];
+  executionStats: ExecutionStats;
 }
 
 interface ConfirmDialogProps {
@@ -62,9 +65,29 @@ function ConfirmDialog({
   );
 }
 
+// Health indicator component
+function HealthIndicator({ status }: { status: ExecutionStats['healthStatus'] }) {
+  const config = {
+    healthy: { color: 'bg-green-500', label: 'Healthy', textColor: 'text-green-700' },
+    stale: { color: 'bg-yellow-500', label: 'Stale', textColor: 'text-yellow-700' },
+    failed: { color: 'bg-red-500', label: 'Failed', textColor: 'text-red-700' },
+    unknown: { color: 'bg-gray-400', label: 'No Data', textColor: 'text-gray-600' },
+  };
+
+  const { color, label, textColor } = config[status];
+
+  return (
+    <div className="flex items-center space-x-2">
+      <span className={`inline-block w-2.5 h-2.5 rounded-full ${color}`} />
+      <span className={textColor}>{label}</span>
+    </div>
+  );
+}
+
 export function AutomationDetailClient({
   automation,
-  initialExecutionHistory
+  initialExecutionHistory,
+  executionStats
 }: AutomationDetailClientProps) {
   const router = useRouter();
   const [executionHistory, setExecutionHistory] = useState<ExecutionLog[]>(initialExecutionHistory);
@@ -75,9 +98,19 @@ export function AutomationDetailClient({
   const [showRunDialog, setShowRunDialog] = useState(false);
   const [showPauseDialog, setShowPauseDialog] = useState(false);
   const [showExecutionProgress, setShowExecutionProgress] = useState(false);
-  const [currentPage, setCurrentPage] = useState(1);
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
-  const logsPerPage = 10;
+
+  // Inline execution viewport state
+  const [showInlineProgress, setShowInlineProgress] = useState(false);
+
+  // Push sequences collapse state - collapse by default if 3+ sequences
+  const [pushSequencesExpanded, setPushSequencesExpanded] = useState(
+    automation.pushSequence.length < 3
+  );
+
+  // Pagination state
+  const [pageSize, setPageSize] = useState(10);
+  const [displayedCount, setDisplayedCount] = useState(10);
 
   const isActive = automation.status === 'active' || automation.isActive;
   const isPaused = automation.status === 'paused';
@@ -143,8 +176,25 @@ export function AutomationDetailClient({
     setError(null);
     setSuccessMessage(null);
 
-    // Show the execution progress modal which will trigger execution via SSE
-    setShowExecutionProgress(true);
+    // Show inline progress viewport and trigger execution via API
+    setShowInlineProgress(true);
+
+    try {
+      const response = await fetch('/api/automation/execute-start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ automationId: automation.id }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || 'Failed to start execution');
+      }
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : 'Unknown error';
+      setError(`Failed to start execution: ${errorMsg}`);
+      setIsRunning(false);
+    }
   };
 
   const handleExecutionComplete = async (status: 'completed' | 'failed') => {
@@ -171,6 +221,32 @@ export function AutomationDetailClient({
       });
     }
     setIsRunning(false);
+  };
+
+  const handleCloseInlineProgress = () => {
+    setShowInlineProgress(false);
+    if (isRunning) {
+      toast.info('Execution running in background', {
+        description: 'Check execution history for status',
+      });
+    }
+    setIsRunning(false);
+  };
+
+  const handleInlineExecutionComplete = async (status: 'completed' | 'failed') => {
+    setIsRunning(false);
+
+    if (status === 'completed') {
+      toast.success('Automation executed successfully');
+    } else {
+      toast.error('Execution failed', {
+        description: 'Check execution details for more information',
+      });
+    }
+
+    // Refresh execution history
+    await refreshExecutionHistory();
+    router.refresh();
   };
 
   const handlePauseResume = async () => {
@@ -212,16 +288,11 @@ export function AutomationDetailClient({
 
   const refreshExecutionHistory = async () => {
     try {
-      const response = await fetch(`/api/automation/monitor?type=executions`);
+      const response = await fetch(`/api/automation/executions?automationId=${automation.id}&limit=50`);
       const data = await response.json();
 
       if (data.success) {
-        const filtered = (data.data.executions || [])
-          .filter((exec: { automationId: string }) => exec.automationId === automation.id)
-          .map((exec: { fullLog?: ExecutionLog }) => exec.fullLog)
-          .filter((log: ExecutionLog | undefined): log is ExecutionLog => log !== undefined);
-
-        setExecutionHistory(filtered);
+        setExecutionHistory(data.data.history || []);
       }
     } catch (err) {
       console.error('Failed to refresh execution history:', err);
@@ -229,11 +300,16 @@ export function AutomationDetailClient({
   };
 
   const handleLoadMore = useCallback(() => {
-    setCurrentPage(prev => prev + 1);
+    setDisplayedCount(prev => prev + pageSize);
+  }, [pageSize]);
+
+  const handlePageSizeChange = useCallback((newSize: number) => {
+    setPageSize(newSize);
+    setDisplayedCount(newSize);
   }, []);
 
-  const paginatedLogs = executionHistory.slice(0, currentPage * logsPerPage);
-  const hasMore = executionHistory.length > paginatedLogs.length;
+  const paginatedLogs = executionHistory.slice(0, displayedCount);
+  const hasMore = executionHistory.length > displayedCount;
 
   const handleEdit = () => {
     router.push(`/automations/${automation.id}/edit`);
@@ -342,24 +418,28 @@ export function AutomationDetailClient({
               <StatusBadge status={automation.status} size="sm" />
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-gray-600">Created:</span>
-              <span className="text-gray-900">{formatDate(automation.createdAt)}</span>
+              <span className="text-gray-600">Health:</span>
+              <HealthIndicator status={executionStats.healthStatus} />
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-gray-600">Type:</span>
-              <span className="text-gray-900">{getScriptOrTypeDisplay()}</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-gray-600">Total Executions:</span>
-              <span className="text-gray-900">{automation.metadata.totalExecutions}</span>
+              <span className="text-gray-600">Audience:</span>
+              <span className="text-gray-900">
+                {executionStats.lastAudienceSize > 0
+                  ? `${executionStats.lastAudienceSize.toLocaleString()} users`
+                  : 'N/A'}
+              </span>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-gray-600">Success Rate:</span>
               <span className="text-gray-900">
-                {automation.metadata.totalExecutions > 0
-                  ? `${Math.round((automation.metadata.successfulExecutions / automation.metadata.totalExecutions) * 100)}%`
+                {executionStats.totalExecutions > 0
+                  ? `${executionStats.recentSuccessRate}%`
                   : 'N/A'}
               </span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-gray-600">Type:</span>
+              <span className="text-gray-900">{getScriptOrTypeDisplay()}</span>
             </div>
           </div>
         </div>
@@ -398,36 +478,73 @@ export function AutomationDetailClient({
         </div>
       </div>
 
-      {/* Push Sequences */}
+      {/* Push Sequences - Collapsible */}
       <div className="bg-white rounded-lg shadow p-6 mb-8">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">
-          PUSH SEQUENCES ({automation.pushSequence.length})
-        </h2>
-        <div className="space-y-3">
-          {automation.pushSequence.map((push, index) => (
-            <div
-              key={push.id || `push-${index}-${push.sequenceOrder}`}
-              className="flex items-start justify-between p-4 bg-gray-50 rounded-md"
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-gray-900">
+            PUSH SEQUENCES ({automation.pushSequence.length})
+          </h2>
+          {automation.pushSequence.length >= 3 && (
+            <button
+              onClick={() => setPushSequencesExpanded(!pushSequencesExpanded)}
+              className="text-sm text-blue-600 hover:text-blue-700 flex items-center space-x-1 transition-colors"
             >
-              <div className="flex-1">
-                <div className="flex items-center space-x-3 mb-1">
-                  <span className="font-semibold text-gray-900">#{push.sequenceOrder}</span>
-                  <span className="font-medium text-gray-900">{push.title}</span>
-                </div>
-                <p className="text-sm text-gray-600 mb-2">{push.body}</p>
-                {push.deepLink && (
-                  <p className="text-xs text-blue-600 truncate">{push.deepLink}</p>
-                )}
-              </div>
-              <div className="ml-4 flex-shrink-0">
-                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                  Layer {push.layerId}
-                </span>
-              </div>
-            </div>
-          ))}
+              <span>{pushSequencesExpanded ? 'Collapse' : 'Expand'}</span>
+              <svg
+                className={`w-4 h-4 transition-transform ${pushSequencesExpanded ? 'rotate-180' : ''}`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+          )}
         </div>
+
+        {pushSequencesExpanded ? (
+          <div className="space-y-3">
+            {automation.pushSequence.map((push, index) => (
+              <div
+                key={push.id || `push-${index}-${push.sequenceOrder}`}
+                className="flex items-start justify-between p-4 bg-gray-50 rounded-md"
+              >
+                <div className="flex-1">
+                  <div className="flex items-center space-x-3 mb-1">
+                    <span className="font-semibold text-gray-900">#{push.sequenceOrder}</span>
+                    <span className="font-medium text-gray-900">{push.title}</span>
+                  </div>
+                  <p className="text-sm text-gray-600 mb-2">{push.body}</p>
+                  {push.deepLink && (
+                    <p className="text-xs text-blue-600 truncate">{push.deepLink}</p>
+                  )}
+                </div>
+                <div className="ml-4 flex-shrink-0">
+                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                    Layer {push.layerId}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div
+            onClick={() => setPushSequencesExpanded(true)}
+            className="p-4 bg-gray-50 rounded-md text-center text-gray-500 cursor-pointer hover:bg-gray-100 transition-colors"
+          >
+            Click to view {automation.pushSequence.length} push configurations
+          </div>
+        )}
       </div>
+
+      {/* Inline Execution Progress Viewport */}
+      <ExecutionProgressInline
+        automationId={automation.id}
+        automationName={automation.name}
+        isVisible={showInlineProgress}
+        onComplete={handleInlineExecutionComplete}
+        onClose={handleCloseInlineProgress}
+      />
 
       {/* Execution History */}
       <div className="bg-white rounded-lg shadow p-6">
@@ -446,6 +563,9 @@ export function AutomationDetailClient({
           onLoadMore={handleLoadMore}
           hasMore={hasMore}
           isLoading={false}
+          totalCount={executionHistory.length}
+          pageSize={pageSize}
+          onPageSizeChange={handlePageSizeChange}
         />
       </div>
 

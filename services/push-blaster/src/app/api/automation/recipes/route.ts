@@ -5,7 +5,41 @@ import { NextRequest, NextResponse } from 'next/server';
 import { automationStorage } from '@/lib/automationStorage';
 import { getAutomationEngineInstance } from '@/lib/automationEngine';
 import { UniversalAutomation, AutomationResponse } from '@/types/automation';
+import { getCadenceServiceUrl } from '@/lib/environmentUtils';
 import { v4 as uuidv4 } from 'uuid';
+
+// Helper to fetch execution stats from cadence service
+async function fetchExecutionStats(layerId: number): Promise<{
+  totalExecutions: number;
+  successfulExecutions: number;
+  lastRunWithin24h: boolean;
+  lastExecutedAt: string | null;
+  lastAudienceSize: number;
+} | null> {
+  try {
+    const cadenceUrl = getCadenceServiceUrl();
+    const response = await fetch(
+      `${cadenceUrl}/api/execution-stats?layerId=${layerId}&limit=1`,
+      { cache: 'no-store' }
+    );
+
+    if (!response.ok) return null;
+
+    const data = await response.json();
+    if (!data.success) return null;
+
+    return {
+      totalExecutions: data.data.stats?.totalExecutions || 0,
+      successfulExecutions: data.data.stats?.successfulExecutions || 0,
+      lastRunWithin24h: data.data.stats?.lastRunWithin24h || false,
+      lastExecutedAt: data.data.stats?.lastExecution?.completedAt || null,
+      lastAudienceSize: data.data.stats?.lastExecution?.audienceSize || 0,
+    };
+  } catch (error) {
+    console.error(`[API] Failed to fetch stats for layer ${layerId}:`, error);
+    return null;
+  }
+}
 
 // GET - List all automations with optional filtering
 export async function GET(req: NextRequest) {
@@ -14,6 +48,7 @@ export async function GET(req: NextRequest) {
     const status = searchParams.get('status');
     const type = searchParams.get('type');
     const template = searchParams.get('template');
+    const enrichStats = searchParams.get('enrichStats') !== 'false'; // Default true
 
     const filters = {
       ...(status && { status }),
@@ -22,6 +57,44 @@ export async function GET(req: NextRequest) {
     };
 
     const automations = await automationStorage.listAutomations(Object.keys(filters).length > 0 ? filters : undefined);
+
+    // Enrich with execution stats from cadence service
+    if (enrichStats && automations.length > 0) {
+      // Group automations by layer ID to minimize API calls
+      const layerIds = new Set<number>();
+      automations.forEach(auto => {
+        const layerId = auto.pushSequence?.[0]?.layerId;
+        if (layerId) layerIds.add(layerId);
+      });
+
+      // Fetch stats for each unique layer ID in parallel
+      const statsMap = new Map<number, Awaited<ReturnType<typeof fetchExecutionStats>>>();
+      await Promise.all(
+        Array.from(layerIds).map(async (layerId) => {
+          const stats = await fetchExecutionStats(layerId);
+          statsMap.set(layerId, stats);
+        })
+      );
+
+      // Enrich automations with stats
+      automations.forEach(auto => {
+        const layerId = auto.pushSequence?.[0]?.layerId;
+        if (layerId) {
+          const stats = statsMap.get(layerId);
+          if (stats) {
+            auto.metadata = {
+              ...auto.metadata,
+              totalExecutions: stats.totalExecutions,
+              successfulExecutions: stats.successfulExecutions,
+              lastExecutedAt: stats.lastExecutedAt || auto.metadata.lastExecutedAt,
+              // Add new fields for UI
+              lastRunWithin24h: stats.lastRunWithin24h,
+              lastAudienceSize: stats.lastAudienceSize,
+            };
+          }
+        }
+      });
+    }
 
     return NextResponse.json({
       success: true,

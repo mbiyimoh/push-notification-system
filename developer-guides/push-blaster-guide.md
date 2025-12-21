@@ -100,8 +100,20 @@
   - `deleteAutomation()`: Remove automation
 
 #### 3. **ScriptExecutor** (`src/lib/scriptExecutor.ts`)
-- **Python script execution**: Spawns child processes for audience generation
+- **Python script execution**: Spawns child processes for audience generation (legacy V1)
 - **Output management**: CSV files stored in `.script-outputs/`
+- **Status**: Being phased out in favor of V2 TypeScript generators
+
+#### 3.5. **V2 TypeScript Generators** (NEW - Dec 2025)
+- **Native TypeScript**: Runs in-process, no subprocess spawning
+- **Key file**: `src/lib/generators/layer3BehaviorGenerator.ts`
+- **Output location**: `.script-outputs/` (same as V1)
+- **Benefits**:
+  - No Python dependencies
+  - Direct database access (uses existing pool)
+  - Easier local development (no module path issues)
+  - Generates both REAL and TEST CSVs in one pass
+- **Migration status**: Layer 3 complete, Layers 1/2/5 still use Python
 
 #### 4. **AudienceProcessor** (`src/lib/audienceProcessor.ts`)
 - **Parallel processing**: Batch-processes audiences (3 at a time max)
@@ -421,6 +433,40 @@ const result = await scriptExecutor.executeScript('generate_new_user_waterfall',
   timeoutMs: 20 * 60 * 1000  // 20 minute timeout
 });
 ```
+
+### 2.5. Test API & V2 Generator Integration (NEW - Dec 2025)
+
+**Issue:** Test API (`/api/automation/test/[id]`) tried to run Python scripts locally, causing errors.
+
+**Root Cause:**
+- V2 TypeScript generators output CSVs to `.script-outputs/`
+- Test API called `executeScript()` which tried to regenerate audiences via Python
+- Python scripts fail locally (missing modules, DB connectivity issues)
+
+**Fix Applied:**
+```typescript
+// Test API now checks for existing V2 CSVs before running Python
+const existingCsvs = await checkForExistingCsvs(mode);
+
+if (existingCsvs.found) {
+  // Use existing V2-generated CSVs (skip Python)
+  sendLog('success', 'Found existing V2-generated CSV files');
+} else {
+  // Fall back to Python script if no recent CSVs exist
+  await executeScript(scriptConfig);
+}
+```
+
+**Key function:** `checkForExistingCsvs()` in `/api/automation/test/[id]/route.ts`
+- Checks `.script-outputs/` for recent CSVs (within 30 minutes)
+- Matches file patterns: `*_TEST_*` for test mode, non-TEST for real mode
+- Requires at least 2 audience types (offer-creators, closet-adders, wishlist-adders)
+
+**Testing flow:**
+1. Run automation → V2 generator creates CSVs in `.script-outputs/`
+2. During cancellation window, click "Test" → reuses existing CSVs
+3. Receives 3 test push notifications (one per audience)
+4. No Python script errors!
 
 ### 3. Environment Variable Requirements
 

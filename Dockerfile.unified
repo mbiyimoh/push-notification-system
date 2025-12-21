@@ -63,7 +63,7 @@ RUN apk add --no-cache \
     && pip3 install --no-cache-dir --break-system-packages psycopg2-binary python-dotenv \
     && apk del gcc python3-dev musl-dev
 
-WORKDIR /app
+WORKDIR /usr/src
 
 ENV NODE_ENV=production
 
@@ -79,12 +79,12 @@ COPY --from=builder-blaster /app/push-blaster/audience-generation-scripts ./push
 COPY --from=builder-blaster /app/push-blaster/shared/python-utilities/ ./push-blaster/shared/python-utilities/
 
 # Create Python module structure for imports
-RUN mkdir -p /app/push-blaster/basic_capabilities/internal_db_queries_toolbox \
-    && cp -r /app/push-blaster/shared/python-utilities/* /app/push-blaster/basic_capabilities/internal_db_queries_toolbox/ \
-    && touch /app/push-blaster/basic_capabilities/__init__.py
+RUN mkdir -p /usr/src/push-blaster/basic_capabilities/internal_db_queries_toolbox \
+    && cp -r /usr/src/push-blaster/shared/python-utilities/* /usr/src/push-blaster/basic_capabilities/internal_db_queries_toolbox/ \
+    && touch /usr/src/push-blaster/basic_capabilities/__init__.py
 
 # Create required directories
-RUN mkdir -p /app/push-blaster/tmp /app/push-blaster/generated_csvs
+RUN mkdir -p /usr/src/push-blaster/tmp /usr/src/push-blaster/generated_csvs
 
 # ----------------------------------------------------------------------------
 # Copy push-cadence-service

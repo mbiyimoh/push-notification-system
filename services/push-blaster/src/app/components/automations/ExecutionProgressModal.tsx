@@ -12,7 +12,7 @@ interface LogEntry {
 }
 
 interface ProgressState {
-  status: 'connecting' | 'starting' | 'running' | 'completed' | 'failed';
+  status: 'connecting' | 'starting' | 'running' | 'completed' | 'failed' | 'cancelled';
   phase: string;
   progress?: {
     current: number;
@@ -21,6 +21,13 @@ interface ProgressState {
   };
   message?: string;
 }
+
+// Polling configuration
+const POLL_CONFIG = {
+  intervalMs: 2000,        // Poll every 2 seconds
+  maxRetries: 3,           // Retry failed polls
+  retryDelayMs: 1000,      // Delay between retries
+};
 
 interface ExecutionProgressModalProps {
   isOpen: boolean;
@@ -65,10 +72,13 @@ export function ExecutionProgressModal({
   });
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [executionId, setExecutionId] = useState<string | null>(null);
 
   const logsEndRef = useRef<HTMLDivElement>(null);
-  const eventSourceRef = useRef<EventSource | null>(null);
-  const logIdCounter = useRef(0);
+  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const cursorRef = useRef<number>(0);
+  const executionStartedRef = useRef(false);
+  const retryCountRef = useRef(0);
 
   // Store onComplete in a ref to prevent useEffect re-runs when parent re-renders
   const onCompleteRef = useRef(onComplete);
@@ -82,6 +92,147 @@ export function ExecutionProgressModal({
     scrollToBottom();
   }, [logs, scrollToBottom]);
 
+  // Start execution via API
+  const startExecutionApi = useCallback(async () => {
+    try {
+      setProgress({ status: 'starting', phase: 'init' });
+
+      const response = await fetch('/api/automation/execute-start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ automationId }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || 'Failed to start execution');
+      }
+
+      const data = await response.json();
+      setExecutionId(data.executionId);
+      executionStartedRef.current = true;
+      setIsConnected(true);
+      setError(null);
+
+      // Add initial log
+      setLogs([{
+        id: 'log-0',
+        timestamp: new Date().toISOString(),
+        level: 'info',
+        phase: 'init',
+        message: `Started execution for "${automationName}"`,
+      }]);
+
+      return data.executionId;
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : 'Unknown error';
+      setError(`Failed to start execution: ${errorMsg}`);
+      setProgress({ status: 'failed', phase: 'error', message: errorMsg });
+      return null;
+    }
+  }, [automationId, automationName]);
+
+  // Poll for execution progress
+  const pollProgress = useCallback(async () => {
+    try {
+      const params = new URLSearchParams({
+        automationId,
+        cursor: cursorRef.current.toString(),
+      });
+
+      const response = await fetch(`/api/automation/execute-poll?${params}`);
+
+      if (!response.ok) {
+        throw new Error(`Poll failed: ${response.status}`);
+      }
+
+      const data = await response.json();
+      retryCountRef.current = 0; // Reset retry count on success
+
+      // Update progress state
+      if (data.execution) {
+        setProgress({
+          status: data.execution.status,
+          phase: data.execution.phase,
+          progress: data.execution.progress,
+          message: data.execution.phaseMessage,
+        });
+        setIsConnected(true);
+        setError(null);
+      }
+
+      // Append new logs
+      if (data.logs && data.logs.length > 0) {
+        setLogs(prev => {
+          const existingIds = new Set(prev.map(l => l.id));
+          const newLogs = data.logs
+            .filter((log: { id: number }) => !existingIds.has(`log-${log.id}`))
+            .map((log: { id: number; timestamp: string; level: LogEntry['level']; phase: string; message: string; data?: Record<string, unknown> }) => ({
+              id: `log-${log.id}`,
+              timestamp: log.timestamp,
+              level: log.level,
+              phase: log.phase,
+              message: log.message,
+              data: log.data,
+            }));
+          return [...prev, ...newLogs];
+        });
+      }
+
+      // Update cursor for next poll
+      if (data.nextCursor) {
+        cursorRef.current = data.nextCursor;
+      }
+
+      // Check if execution is complete
+      if (data.execution?.status === 'completed' || data.execution?.status === 'failed') {
+        // Stop polling
+        if (pollIntervalRef.current) {
+          clearInterval(pollIntervalRef.current);
+          pollIntervalRef.current = null;
+        }
+        onCompleteRef.current?.(data.execution.status);
+      }
+
+      return data;
+    } catch (err) {
+      retryCountRef.current++;
+
+      if (retryCountRef.current >= POLL_CONFIG.maxRetries) {
+        setError('Connection issues. Execution may still be running in the background.');
+        setIsConnected(false);
+      }
+
+      console.error('[ExecutionProgressModal] Poll error:', err);
+      return null;
+    }
+  }, [automationId]);
+
+  // Start polling loop
+  const startPolling = useCallback(() => {
+    // Clear any existing interval
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+    }
+
+    // Initial poll
+    pollProgress();
+
+    // Set up polling interval
+    pollIntervalRef.current = setInterval(() => {
+      pollProgress();
+    }, POLL_CONFIG.intervalMs);
+  }, [pollProgress]);
+
+  // Cleanup function
+  const cleanup = useCallback(() => {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+  }, []);
+
+  // Main effect for modal open/close
   useEffect(() => {
     if (!isOpen) return;
 
@@ -90,88 +241,37 @@ export function ExecutionProgressModal({
     setProgress({ status: 'connecting', phase: 'init' });
     setError(null);
     setIsConnected(false);
+    setExecutionId(null);
+    cursorRef.current = 0;
+    executionStartedRef.current = false;
+    retryCountRef.current = 0;
 
-    // Connect to SSE endpoint
-    const url = `/api/automation/execute-stream?automationId=${automationId}&startExecution=${startExecution}`;
-    const eventSource = new EventSource(url);
-    eventSourceRef.current = eventSource;
-
-    eventSource.addEventListener('connected', (e) => {
-      setIsConnected(true);
-      setProgress(prev => ({ ...prev, status: 'starting' }));
-      const data = JSON.parse(e.data);
-      addLog('info', 'init', `Connected to execution stream for "${data.automationName}"`);
-    });
-
-    eventSource.addEventListener('log', (e) => {
-      const data = JSON.parse(e.data);
-      addLog(data.level, data.phase, data.message, data.data);
-    });
-
-    eventSource.addEventListener('progress', (e) => {
-      const data = JSON.parse(e.data);
-      setProgress({
-        status: data.status,
-        phase: data.phase,
-        progress: data.progress,
-        message: data.message
+    // Start execution if requested
+    if (startExecution) {
+      startExecutionApi().then((execId) => {
+        if (execId) {
+          // Start polling after execution is initiated
+          startPolling();
+        }
       });
-    });
-
-    eventSource.addEventListener('done', (e) => {
-      const data = JSON.parse(e.data);
-      setProgress(prev => ({
-        ...prev,
-        status: data.status,
-        message: data.message
-      }));
-      eventSource.close();
-      // Use ref to call onComplete to avoid dependency array issues
-      onCompleteRef.current?.(data.status);
-    });
-
-    eventSource.addEventListener('heartbeat', () => {
-      // Keep-alive, no action needed
-    });
-
-    eventSource.onerror = () => {
-      if (eventSource.readyState === EventSource.CLOSED) {
-        // Normal close
-        return;
-      }
-      setError('Connection lost. Execution may still be running in the background.');
-      eventSource.close();
-    };
-
-    function addLog(
-      level: LogEntry['level'],
-      phase: string,
-      message: string,
-      data?: Record<string, unknown>
-    ) {
-      const entry: LogEntry = {
-        id: `log-${++logIdCounter.current}`,
-        timestamp: new Date().toISOString(),
-        level,
-        phase,
-        message,
-        data
-      };
-      setLogs(prev => [...prev, entry]);
+    } else {
+      // Just start polling for existing execution
+      startPolling();
     }
 
-    return () => {
-      eventSource.close();
-      eventSourceRef.current = null;
-    };
-    // Note: onComplete is accessed via ref to prevent unnecessary re-runs
-  }, [isOpen, automationId, startExecution]);
+    return cleanup;
+  }, [isOpen, automationId, startExecution, startExecutionApi, startPolling, cleanup]);
 
   const handleClose = () => {
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
-    }
+    cleanup();
     onClose();
+  };
+
+  // Manual refresh button handler
+  const handleManualRefresh = () => {
+    setError(null);
+    retryCountRef.current = 0;
+    pollProgress();
   };
 
   const formatTimestamp = (iso: string): string => {
@@ -242,8 +342,14 @@ export function ExecutionProgressModal({
         {/* Log Output */}
         <div className="flex-1 overflow-y-auto p-4 font-mono text-sm bg-gray-950 min-h-[300px]">
           {error && (
-            <div className="mb-3 p-2 bg-red-900/50 border border-red-700 rounded text-red-300">
-              {error}
+            <div className="mb-3 p-2 border rounded flex items-center justify-between bg-yellow-900/50 border-yellow-700 text-yellow-300">
+              <span>{error}</span>
+              <button
+                onClick={handleManualRefresh}
+                className="ml-3 px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded transition-colors"
+              >
+                Refresh
+              </button>
             </div>
           )}
 
@@ -279,10 +385,13 @@ export function ExecutionProgressModal({
         <div className="px-4 py-3 border-t border-gray-700 flex items-center justify-between">
           <div className="text-sm text-gray-400">
             {logs.length} log entries
+            {!isConnected && !isComplete && (
+              <span className="ml-2 text-yellow-500">(connection issues)</span>
+            )}
           </div>
           <div className="flex space-x-3">
             {!isComplete && (
-              <span className="text-yellow-400 text-sm flex items-center">
+              <span className="text-sm flex items-center text-yellow-400">
                 <svg className="animate-spin -ml-1 mr-2 h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />

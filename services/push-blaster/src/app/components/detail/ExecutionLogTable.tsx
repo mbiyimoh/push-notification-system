@@ -25,6 +25,9 @@ interface ExecutionLogTableProps {
   onLoadMore: () => void;
   hasMore: boolean;
   isLoading?: boolean;
+  totalCount?: number;
+  pageSize?: number;
+  onPageSizeChange?: (size: number) => void;
 }
 
 const formatDuration = (milliseconds: number): string => {
@@ -42,12 +45,17 @@ const formatNumber = (num: number): string => {
   return num.toLocaleString();
 };
 
+const PAGE_SIZE_OPTIONS = [10, 25, 50];
+
 const ExecutionLogTable: React.FC<ExecutionLogTableProps> = ({
   automationId,
   logs,
   onLoadMore,
   hasMore,
   isLoading = false,
+  totalCount,
+  pageSize = 10,
+  onPageSizeChange,
 }) => {
   const router = useRouter();
   const [selectedIndex, setSelectedIndex] = useState<number>(-1);
@@ -198,22 +206,54 @@ const ExecutionLogTable: React.FC<ExecutionLogTableProps> = ({
         </table>
       </div>
 
-      {/* Keyboard navigation hint */}
-      {logs.length > 0 && (
-        <div className="mt-4 text-xs text-gray-400 text-center">
-          Use <kbd className="px-1 bg-gray-100 rounded">J</kbd>/<kbd className="px-1 bg-gray-100 rounded">K</kbd> to navigate, <kbd className="px-1 bg-gray-100 rounded">Enter</kbd> to open
+      {/* Footer with pagination controls */}
+      <div className="mt-4 flex items-center justify-between">
+        {/* Showing count */}
+        <div className="text-sm text-gray-500">
+          Showing {logs.length}{totalCount !== undefined && totalCount > logs.length ? ` of ${totalCount}` : ''}
         </div>
-      )}
 
-      {hasMore && (
-        <div className="flex justify-center mt-6">
+        {/* Page size toggle */}
+        {onPageSizeChange && (
+          <div className="flex items-center space-x-2">
+            <span className="text-sm text-gray-500">Per page:</span>
+            <div className="flex rounded-md overflow-hidden border border-gray-300">
+              {PAGE_SIZE_OPTIONS.map((size) => (
+                <button
+                  key={size}
+                  onClick={() => onPageSizeChange(size)}
+                  className={`px-3 py-1 text-sm transition-colors ${
+                    pageSize === size
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-white text-gray-600 hover:bg-gray-100'
+                  }`}
+                >
+                  {size}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Load more button */}
+        {hasMore && (
           <button
             onClick={onLoadMore}
             disabled={isLoading}
-            className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+            className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
           >
             {isLoading ? 'Loading...' : 'Load More'}
           </button>
+        )}
+
+        {/* Placeholder for alignment when no load more button */}
+        {!hasMore && onPageSizeChange && <div />}
+      </div>
+
+      {/* Keyboard navigation hint */}
+      {logs.length > 0 && (
+        <div className="mt-3 text-xs text-gray-400 text-center">
+          Use <kbd className="px-1 bg-gray-100 rounded">J</kbd>/<kbd className="px-1 bg-gray-100 rounded">K</kbd> to navigate, <kbd className="px-1 bg-gray-100 rounded">Enter</kbd> to open
         </div>
       )}
     </div>

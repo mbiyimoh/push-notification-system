@@ -11,7 +11,7 @@ import os
 from dotenv import load_dotenv
 
 # Load the .env file from the root of the project
-load_dotenv()
+load_dotenv('/usr/src/.env')
 
 # --- PostgreSQL Database Configuration ---
 DB_HOST = os.getenv("DB_HOST")

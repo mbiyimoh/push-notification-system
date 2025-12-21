@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { UniversalAutomation, AutomationType } from '@/types/automation';
+import { UniversalAutomation } from '@/types/automation';
 import { getNextExecutionAt } from '@/lib/scheduleUtils';
 import StatusBadge from './StatusBadge';
 
@@ -13,13 +13,6 @@ interface AutomationCardProps {
   onDelete: (id: string) => void;
 }
 
-const typeLabels: Record<AutomationType, string> = {
-  single_push: 'Single Push',
-  sequence: 'Sequence',
-  recurring: 'Recurring',
-  triggered: 'Triggered',
-};
-
 const frequencyLabels: Record<string, string> = {
   once: 'Once',
   daily: 'Daily',
@@ -28,35 +21,72 @@ const frequencyLabels: Record<string, string> = {
   custom: 'Custom',
 };
 
-function formatDate(dateString: string | undefined | null): string {
+// Health indicator based on last run status
+function HealthIndicator({ automation }: { automation: UniversalAutomation }) {
+  const lastRunWithin24h = (automation.metadata as { lastRunWithin24h?: boolean })?.lastRunWithin24h;
+  const totalExecutions = automation.metadata.totalExecutions || 0;
+
+  let status: 'healthy' | 'stale' | 'unknown' = 'unknown';
+  if (totalExecutions === 0) {
+    status = 'unknown';
+  } else if (lastRunWithin24h) {
+    status = 'healthy';
+  } else {
+    status = 'stale';
+  }
+
+  const config = {
+    healthy: { color: 'bg-green-500', label: 'Healthy' },
+    stale: { color: 'bg-yellow-500', label: 'Stale' },
+    unknown: { color: 'bg-gray-400', label: 'No runs' },
+  };
+
+  const { color, label } = config[status];
+
+  return (
+    <div className="flex items-center space-x-1.5" title={label}>
+      <span className={`inline-block w-2 h-2 rounded-full ${color}`} />
+      <span className="text-xs text-gray-500">{label}</span>
+    </div>
+  );
+}
+
+function formatRelativeTime(dateString: string | undefined | null): string {
+  if (!dateString) return 'Never';
+
+  const date = new Date(dateString);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMins / 60);
+  const diffDays = Math.floor(diffHours / 24);
+
+  if (diffMins < 1) return 'Just now';
+  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffDays === 1) return 'Yesterday';
+  if (diffDays < 7) return `${diffDays}d ago`;
+
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+function formatNextRun(dateString: string | undefined | null): string {
   if (!dateString) return 'Not scheduled';
 
   const date = new Date(dateString);
-  const today = new Date();
-  const tomorrow = new Date(today);
-  tomorrow.setDate(tomorrow.getDate() + 1);
+  const now = new Date();
+  const diffMs = date.getTime() - now.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMins / 60);
+  const diffDays = Math.floor(diffHours / 24);
 
-  // Reset time for comparison
-  const dateOnly = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-  const todayOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  const tomorrowOnly = new Date(tomorrow.getFullYear(), tomorrow.getMonth(), tomorrow.getDate());
+  if (diffMins < 0) return 'Overdue';
+  if (diffMins < 60) return `In ${diffMins}m`;
+  if (diffHours < 24) return `In ${diffHours}h`;
+  if (diffDays === 1) return 'Tomorrow';
+  if (diffDays < 7) return `In ${diffDays}d`;
 
-  if (dateOnly.getTime() === todayOnly.getTime()) {
-    return `Today at ${date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`;
-  } else if (dateOnly.getTime() === tomorrowOnly.getTime()) {
-    return `Tomorrow at ${date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`;
-  } else {
-    return date.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: date.getFullYear() !== today.getFullYear() ? 'numeric' : undefined
-    }) + ` at ${date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`;
-  }
-}
-
-function calculateSuccessRate(successful: number, total: number): string {
-  if (total === 0) return '0';
-  return ((successful / total) * 100).toFixed(1);
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
 export default function AutomationCard({
@@ -66,11 +96,6 @@ export default function AutomationCard({
   onDelete
 }: AutomationCardProps) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-
-  const successRate = calculateSuccessRate(
-    automation.metadata.successfulExecutions,
-    automation.metadata.totalExecutions
-  );
 
   const handleDeleteClick = () => {
     setShowDeleteConfirm(true);
@@ -85,87 +110,67 @@ export default function AutomationCard({
     setShowDeleteConfirm(false);
   };
 
+  const lastAudienceSize = (automation.metadata as { lastAudienceSize?: number })?.lastAudienceSize || 0;
+  const nextRunDateString = getNextExecutionAt(automation);
+
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm transition-shadow hover:shadow-md">
-      {/* Header */}
-      <div className="mb-4 flex items-start justify-between">
-        <div className="flex-1">
-          <h3 className="text-lg font-semibold text-gray-900 mb-1">
+    <div className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm transition-shadow hover:shadow-md">
+      {/* Header Row: Name, Status, Health */}
+      <div className="flex items-start justify-between mb-3">
+        <div className="flex-1 min-w-0">
+          <Link
+            href={`/automations/${automation.id}`}
+            className="text-lg font-semibold text-gray-900 hover:text-blue-600 transition-colors truncate block"
+          >
             {automation.name}
-          </h3>
-          {automation.description && (
-            <p className="text-sm text-gray-600 mb-2">{automation.description}</p>
-          )}
-          <div className="flex items-center gap-2">
-            <StatusBadge status={automation.status} size="sm" />
+          </Link>
+        </div>
+        <div className="flex items-center space-x-3 ml-4 flex-shrink-0">
+          <HealthIndicator automation={automation} />
+          <StatusBadge status={automation.status} size="sm" />
+        </div>
+      </div>
+
+      {/* Key Metrics Row */}
+      <div className="flex items-center space-x-6 text-sm mb-4">
+        <div className="flex items-center space-x-1.5">
+          <span className="text-gray-500">Schedule:</span>
+          <span className="font-medium text-gray-900">
+            {frequencyLabels[automation.schedule.frequency]} @ {automation.schedule.executionTime}
+          </span>
+        </div>
+        <div className="flex items-center space-x-1.5">
+          <span className="text-gray-500">Pushes:</span>
+          <span className="font-medium text-gray-900">{automation.pushSequence.length}</span>
+        </div>
+        {lastAudienceSize > 0 && (
+          <div className="flex items-center space-x-1.5">
+            <span className="text-gray-500">Audience:</span>
+            <span className="font-medium text-gray-900">{lastAudienceSize.toLocaleString()}</span>
           </div>
-        </div>
+        )}
       </div>
 
-      {/* Automation Details Grid */}
-      <div className="grid grid-cols-2 gap-4 mb-4 border-t border-gray-100 pt-4">
+      {/* Timing Row */}
+      <div className="flex items-center space-x-6 text-sm text-gray-600 mb-4 pb-4 border-b border-gray-100">
         <div>
-          <p className="text-xs text-gray-500 mb-1">Type</p>
-          <p className="text-sm font-medium text-gray-900">
-            {typeLabels[automation.type] || automation.type}
-          </p>
+          <span className="text-gray-500">Last run: </span>
+          <span className="font-medium">{formatRelativeTime(automation.metadata.lastExecutedAt)}</span>
         </div>
-
         <div>
-          <p className="text-xs text-gray-500 mb-1">Frequency</p>
-          <p className="text-sm font-medium text-gray-900">
-            {frequencyLabels[automation.schedule.frequency] || automation.schedule.frequency}
-          </p>
+          <span className="text-gray-500">Next: </span>
+          <span className="font-medium text-blue-600">{formatNextRun(nextRunDateString)}</span>
         </div>
-
-        <div>
-          <p className="text-xs text-gray-500 mb-1">Execution Time</p>
-          <p className="text-sm font-medium text-gray-900">
-            {automation.schedule.executionTime}
-          </p>
-        </div>
-
-        <div>
-          <p className="text-xs text-gray-500 mb-1">Timezone</p>
-          <p className="text-sm font-medium text-gray-900">
-            {automation.schedule.timezone}
-          </p>
-        </div>
-
-        <div>
-          <p className="text-xs text-gray-500 mb-1">Push Sequence</p>
-          <p className="text-sm font-medium text-gray-900">
-            {automation.pushSequence.length} push{automation.pushSequence.length !== 1 ? 'es' : ''}
-          </p>
-        </div>
-
-        <div>
-          <p className="text-xs text-gray-500 mb-1">Executions</p>
-          <p className="text-sm font-medium text-gray-900">
-            {automation.metadata.totalExecutions} ({successRate}% success)
-          </p>
-        </div>
+        {automation.metadata.totalExecutions > 0 && (
+          <div>
+            <span className="text-gray-500">Runs: </span>
+            <span className="font-medium">{automation.metadata.totalExecutions}</span>
+          </div>
+        )}
       </div>
 
-      {/* Run Dates */}
-      <div className="grid grid-cols-2 gap-4 mb-4 border-t border-gray-100 pt-4">
-        <div>
-          <p className="text-xs text-gray-500 mb-1">Last Run</p>
-          <p className="text-sm text-gray-700">
-            {formatDate(automation.metadata.lastExecutedAt)}
-          </p>
-        </div>
-
-        <div>
-          <p className="text-xs text-gray-500 mb-1">Next Run</p>
-          <p className="text-sm text-gray-700 font-medium">
-            {formatDate(getNextExecutionAt(automation))}
-          </p>
-        </div>
-      </div>
-
-      {/* Actions */}
-      <div className="flex items-center gap-2 border-t border-gray-100 pt-4">
+      {/* Actions Row */}
+      <div className="flex items-center gap-2">
         <Link
           href={`/automations/${automation.id}`}
           className="px-3 py-1.5 text-sm font-medium text-blue-600 bg-blue-50 rounded-md hover:bg-blue-100 transition-colors"
@@ -174,7 +179,7 @@ export default function AutomationCard({
         </Link>
 
         <Link
-          href={`/edit-automation/${automation.id}`}
+          href={`/automations/${automation.id}/edit`}
           className="px-3 py-1.5 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors"
         >
           Edit
@@ -201,13 +206,13 @@ export default function AutomationCard({
         {!showDeleteConfirm ? (
           <button
             onClick={handleDeleteClick}
-            className="px-3 py-1.5 text-sm font-medium text-red-600 bg-red-50 rounded-md hover:bg-red-100 transition-colors"
+            className="px-3 py-1.5 text-sm font-medium text-red-600 hover:text-red-700 hover:bg-red-50 rounded-md transition-colors"
           >
             Delete
           </button>
         ) : (
           <div className="flex items-center gap-2">
-            <span className="text-sm text-gray-600">Confirm delete?</span>
+            <span className="text-sm text-gray-600">Delete?</span>
             <button
               onClick={handleConfirmDelete}
               className="px-3 py-1.5 text-sm font-medium text-white bg-red-600 rounded-md hover:bg-red-700 transition-colors"
@@ -218,7 +223,7 @@ export default function AutomationCard({
               onClick={handleCancelDelete}
               className="px-3 py-1.5 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors"
             >
-              Cancel
+              No
             </button>
           </div>
         )}
