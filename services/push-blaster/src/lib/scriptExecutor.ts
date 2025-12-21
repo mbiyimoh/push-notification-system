@@ -303,7 +303,10 @@ export class ScriptExecutor {
           .map(file => path.join(generatedCsvsDir, file));
 
         if (csvFiles.length === 0) {
-          throw new Error(`Script did not generate any CSV files in: ${generatedCsvsDir}`);
+          // Include script stdout/stderr in error for debugging
+          const scriptOutput = result.stdout ? `\n\nScript stdout:\n${result.stdout}` : '';
+          const scriptError = result.stderr ? `\n\nScript stderr:\n${result.stderr}` : '';
+          throw new Error(`Script did not generate any CSV files in: ${generatedCsvsDir}${scriptOutput}${scriptError}`);
         }
 
         console.log(`[DEBUG] Found ${csvFiles.length} generated CSV files:`, csvFiles);
