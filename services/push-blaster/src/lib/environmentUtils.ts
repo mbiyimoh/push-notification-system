@@ -1,18 +1,18 @@
-// Environment-aware utility functions for Railway and local development
-// These utilities handle differences between Railway deployment and local development
+// Environment-aware utility functions for GCP/Docker and local development
+// These utilities handle differences between Docker deployment and local development
 
 import fs from 'fs';
 import path from 'path';
 
 /**
  * Get the cadence service URL from environment or fallback to localhost.
- * Railway deployment uses CADENCE_SERVICE_URL env var.
+ * GCP/Docker deployment uses CADENCE_SERVICE_URL env var (typically localhost:3002 in unified container).
  * Local development defaults to http://localhost:3002.
  */
 export function getCadenceServiceUrl(): string {
   const envUrl = process.env.CADENCE_SERVICE_URL;
 
-  // In production (Railway), CADENCE_SERVICE_URL should be set
+  // In production (GCP/Docker), CADENCE_SERVICE_URL should be set
   if (process.env.NODE_ENV === 'production' && !envUrl) {
     console.error('[CRITICAL] CADENCE_SERVICE_URL not set in production environment. Cadence filtering may fail.');
   }
