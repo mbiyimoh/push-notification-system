@@ -7,3 +7,17 @@ export {
   getBulkInventoryCounts,
   getBulkWishlistCounts,
 } from './variantQueries';
+
+// Waterfall queries for Layer 5
+export {
+  getNewUsersInWindow,
+  checkUsersClosetCompletion,
+  checkUsersBioCompletion,
+  checkUsersOfferCompletion,
+  checkUsersWishlistCompletion,
+} from './waterfallQueries';
+export type { NewUser } from './waterfallQueries';
+
+// Target shoe queries for waterfall enrichment
+export { getTopTargetShoeForUsers } from './targetShoeQueries';
+export type { TargetShoeResult } from './targetShoeQueries';

@@ -81,3 +81,21 @@ export const FOUNDER_TEST_USER = {
   firstName: 'Mbiyimoh',
   usersize: '13',
 } as const;
+
+// Waterfall user record for Layer 5 CSV output
+export interface WaterfallUserRecord {
+  user_id: string;
+  username: string;
+  firstName: string;
+  new_user_level: number;
+  top_target_shoe?: string;
+  top_target_shoe_variantid?: string;
+  // Index signature for CsvGenerator compatibility
+  [key: string]: string | number | undefined;
+}
+
+// CSV column definitions for waterfall levels
+export const WATERFALL_CSV_COLUMNS = {
+  levels_1_2: ['user_id', 'username', 'firstName', 'new_user_level'],
+  levels_3_4_5: ['user_id', 'username', 'firstName', 'new_user_level', 'top_target_shoe', 'top_target_shoe_variantid'],
+} as const;

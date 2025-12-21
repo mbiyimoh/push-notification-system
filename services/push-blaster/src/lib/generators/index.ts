@@ -2,12 +2,14 @@
 
 import { BaseAudienceGenerator } from './BaseAudienceGenerator';
 import { Layer3BehaviorGenerator } from './layer3/Layer3BehaviorGenerator';
+import { Layer5WaterfallGenerator } from './layer5/Layer5WaterfallGenerator';
 
 // Export types
 export * from './types';
 export { BaseAudienceGenerator } from './BaseAudienceGenerator';
 export { CsvGenerator } from './CsvGenerator';
 export { Layer3BehaviorGenerator } from './layer3/Layer3BehaviorGenerator';
+export { Layer5WaterfallGenerator } from './layer5/Layer5WaterfallGenerator';
 
 // Generator registry for lookup by name or legacy script ID
 class GeneratorRegistry {
@@ -54,7 +56,7 @@ class GeneratorRegistry {
 
       // Register all generators
       this.register(new Layer3BehaviorGenerator(pool));
-      // Future: this.register(new Layer2TrendingGenerator(pool));
+      this.register(new Layer5WaterfallGenerator(pool));
 
       this.initialized = true;
       console.log(`[GeneratorRegistry] Registered ${this.generators.size / 2} generators`);
@@ -93,9 +95,7 @@ class GeneratorRegistry {
   private getLegacyScriptId(name: string): string | null {
     const mapping: Record<string, string> = {
       'layer3-behavior': 'generate_layer_3_push_csvs',
-      // Future mappings:
-      // 'layer2-trending': 'generate_layer_2_push_csv',
-      // 'layer5-waterfall': 'generate_new_user_waterfall',
+      'layer5-waterfall': 'generate_new_user_waterfall',
     };
     return mapping[name] ?? null;
   }
