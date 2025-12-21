@@ -442,10 +442,11 @@ export class SafeguardMonitor {
       const automationEngine = getAutomationEngineInstance();
       const activeExecutions = automationEngine.getAllActiveExecutions();
       this.metrics.activeExecutions = Object.keys(activeExecutions).length;
-      
-      // This would query the storage system for total automations
-      this.metrics.totalAutomations = 0; // Placeholder
-    } catch (error: any) {
+
+      // Get total scheduled automations from the automation engine
+      const debugInfo = automationEngine.getDebugInfo();
+      this.metrics.totalAutomations = debugInfo.scheduledJobsCount;
+    } catch (error: unknown) {
       this.logError('Failed to update metrics', error);
     }
   }
