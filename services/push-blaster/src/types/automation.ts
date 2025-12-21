@@ -67,7 +67,10 @@ export interface AutomationMetadata {
   failedExecutions: number;
   lastError?: string;
   templateId?: string;
-  templateVariables?: { [key: string]: any };
+  templateVariables?: Record<string, string | number | boolean | null>;
+  // UI-specific fields populated from execution stats
+  lastRunWithin24h?: boolean;
+  lastAudienceSize?: number;
 }
 
 // Extending existing AudienceCriteria interface from scheduled pushes
@@ -159,7 +162,7 @@ export interface TemplateConfig {
   defaultSettings: Partial<AutomationSettings>;
   pushTemplates: Partial<AutomationPush>[];
   requiredVariables: string[];
-  usedVariables?: { [key: string]: any }; // Corrected type
+  usedVariables?: Record<string, string | number | boolean | null>;
   audienceTemplate?: Partial<AudienceCriteria>;
 }
 
@@ -195,5 +198,5 @@ export interface ExecutionResponse {
   status: AutomationStatus;
   nextPhase?: ExecutionPhase;
   message: string;
-  debugInfo?: any;
+  debugInfo?: unknown;
 }
