@@ -1031,7 +1031,6 @@ def get_new_users_in_window(min_hours: int = 12, max_days: int = 14) -> List[Dic
     WHERE u.created_at BETWEEN NOW() - INTERVAL '{max_days} days' AND NOW() - INTERVAL '{min_hours} hours'
     AND u.deleted_at = 0
     AND u.first_name IS NOT NULL
-    AND usp.shoe_size IS NOT NULL
     ORDER BY u.created_at DESC
     """
     
