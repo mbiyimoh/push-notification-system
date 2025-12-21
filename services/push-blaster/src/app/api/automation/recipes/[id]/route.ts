@@ -71,11 +71,13 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
     }
 
     const automationEngine = getAutomationEngineInstance();
+    const debugInfo = automationEngine.getDebugInfo();
     console.log(`[API-RESCHEDULE] ═══════════════════════════════════════════════════════════════`);
     console.log(`[API-RESCHEDULE] Automation update triggered for: ${updatedAutomation.id}`);
     console.log(`[API-RESCHEDULE] Status: ${updatedAutomation.status}, isActive: ${updatedAutomation.isActive}`);
     console.log(`[API-RESCHEDULE] New schedule: ${updatedAutomation.schedule.executionTime} (${updatedAutomation.schedule.frequency})`);
-    console.log(`[API-RESCHEDULE] Engine instance: ${automationEngine.getDebugInfo().instanceId}`);
+    console.log(`[API-RESCHEDULE] Engine instance ID: ${debugInfo.instanceId}`);
+    console.log(`[API-RESCHEDULE] Engine scheduled jobs count: ${debugInfo.scheduledJobsCount}`);
     console.log(`[API-RESCHEDULE] ═══════════════════════════════════════════════════════════════`);
 
     // CRITICAL FIX: Handle scheduling changes when automation is updated

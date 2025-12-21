@@ -9,7 +9,7 @@
     "timezone": "America/Chicago",
     "frequency": "daily",
     "startDate": "2025-08-16",
-    "executionTime": "12:30",
+    "executionTime": "13:05",
     "leadTimeMinutes": 30
   },
   "template": {
