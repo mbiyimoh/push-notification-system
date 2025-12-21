@@ -71,10 +71,19 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
     }
 
     const automationEngine = getAutomationEngineInstance();
+    console.log(`[API-RESCHEDULE] ═══════════════════════════════════════════════════════════════`);
+    console.log(`[API-RESCHEDULE] Automation update triggered for: ${updatedAutomation.id}`);
+    console.log(`[API-RESCHEDULE] Status: ${updatedAutomation.status}, isActive: ${updatedAutomation.isActive}`);
+    console.log(`[API-RESCHEDULE] New schedule: ${updatedAutomation.schedule.executionTime} (${updatedAutomation.schedule.frequency})`);
+    console.log(`[API-RESCHEDULE] Engine instance: ${automationEngine.getDebugInfo().instanceId}`);
+    console.log(`[API-RESCHEDULE] ═══════════════════════════════════════════════════════════════`);
+
     // CRITICAL FIX: Handle scheduling changes when automation is updated
     if (updatedAutomation.status === 'active' || updatedAutomation.isActive) {
       // Cancel existing schedule and create new one
+      console.log(`[API-RESCHEDULE] Calling scheduleAutomation() for rescheduling...`);
       const scheduleResult = await automationEngine.scheduleAutomation(updatedAutomation);
+      console.log(`[API-RESCHEDULE] Schedule result: ${JSON.stringify(scheduleResult)}`);
       if (!scheduleResult.success) {
         return NextResponse.json({
           success: false,
@@ -94,12 +103,13 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
       message: 'Automation updated and rescheduled successfully'
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error updating automation:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     return NextResponse.json({
       success: false,
       message: 'Failed to update automation',
-      errors: [error.message]
+      errors: [errorMessage]
     }, { status: 500 });
   }
 }
@@ -131,12 +141,13 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
       status: deleteResult.success ? 200 : 500 
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error deleting automation:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     return NextResponse.json({
       success: false,
       message: 'Failed to delete automation',
-      errors: [error.message]
+      errors: [errorMessage]
     }, { status: 500 });
   }
 }
