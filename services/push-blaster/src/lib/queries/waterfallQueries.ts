@@ -13,6 +13,47 @@ export interface NewUser {
 }
 
 /**
+ * Generic bulk user completion checker
+ * Returns Map<userId, hasCompleted>
+ */
+async function checkBulkUserCompletion(
+  pool: Pool,
+  userIds: string[],
+  options: {
+    tableName: string;
+    userIdColumn: string;
+    additionalConditions?: string;
+    logLabel: string;
+  }
+): Promise<Map<string, boolean>> {
+  if (userIds.length === 0) return new Map();
+
+  const startTime = Date.now();
+  const whereClause = options.additionalConditions
+    ? `AND ${options.additionalConditions}`
+    : '';
+
+  const query = `
+    SELECT DISTINCT ${options.userIdColumn} as user_id
+    FROM ${options.tableName}
+    WHERE ${options.userIdColumn} = ANY($1::uuid[])
+    ${whereClause}
+  `;
+
+  const result = await pool.query(query, [userIds]);
+  const completedSet = new Set(result.rows.map(r => r.user_id));
+
+  const completionMap = new Map<string, boolean>();
+  for (const userId of userIds) {
+    completionMap.set(userId, completedSet.has(userId));
+  }
+
+  const queryTimeMs = Date.now() - startTime;
+  console.log(`[waterfallQueries] ${options.logLabel}: ${result.rows.length}/${userIds.length} (${queryTimeMs}ms)`);
+  return completionMap;
+}
+
+/**
  * Fetch users who signed up between min_hours and max_days ago
  * Base audience for waterfall extraction
  */
@@ -21,7 +62,11 @@ export async function getNewUsersInWindow(
   minHours: number = 12,
   maxDays: number = 14
 ): Promise<NewUser[]> {
+  const startTime = Date.now();
   console.log(`[waterfallQueries] Fetching new users (${minHours}h - ${maxDays}d window)`);
+
+  // Convert days to hours for parameterized interval
+  const maxHours = maxDays * 24;
 
   const query = `
     WITH user_size_preferences AS (
@@ -44,46 +89,31 @@ export async function getNewUsersInWindow(
     FROM users u
     LEFT JOIN user_size_preferences usp ON u.id = usp.user_id
     LEFT JOIN user_activities ua ON u.id = ua.user_id
-    WHERE u.created_at BETWEEN NOW() - INTERVAL '${maxDays} days'
-                           AND NOW() - INTERVAL '${minHours} hours'
+    WHERE u.created_at BETWEEN NOW() - make_interval(hours => $1)
+                           AND NOW() - make_interval(hours => $2)
     AND u.deleted_at = 0
     AND u.first_name IS NOT NULL
     ORDER BY u.created_at DESC
   `;
 
-  const result = await pool.query(query);
-  console.log(`[waterfallQueries] Found ${result.rows.length} new users`);
+  const result = await pool.query(query, [maxHours, minHours]);
+  const queryTimeMs = Date.now() - startTime;
+  console.log(`[waterfallQueries] Found ${result.rows.length} new users (${queryTimeMs}ms)`);
   return result.rows;
 }
 
 /**
  * Check which users have added any items to their closet
- * Uses bulk query with ANY() to avoid N+1
  */
 export async function checkUsersClosetCompletion(
   pool: Pool,
   userIds: string[]
 ): Promise<Map<string, boolean>> {
-  if (userIds.length === 0) return new Map();
-
-  const query = `
-    SELECT DISTINCT user_id
-    FROM inventory_items
-    WHERE user_id = ANY($1::uuid[])
-  `;
-
-  const result = await pool.query(query, [userIds]);
-  const usersWithCloset = new Set(result.rows.map(r => r.user_id));
-
-  const completionMap = new Map<string, boolean>();
-  for (const userId of userIds) {
-    completionMap.set(userId, usersWithCloset.has(userId));
-  }
-
-  const completedCount = result.rows.length;
-  console.log(`[waterfallQueries] Closet completion: ${completedCount}/${userIds.length}`);
-
-  return completionMap;
+  return checkBulkUserCompletion(pool, userIds, {
+    tableName: 'inventory_items',
+    userIdColumn: 'user_id',
+    logLabel: 'Closet completion',
+  });
 }
 
 /**
@@ -95,6 +125,9 @@ export async function checkUsersBioCompletion(
 ): Promise<Map<string, boolean>> {
   if (userIds.length === 0) return new Map();
 
+  const startTime = Date.now();
+
+  // Bio check needs special handling - checking users table with bio condition
   const query = `
     SELECT id as user_id
     FROM users
@@ -111,7 +144,8 @@ export async function checkUsersBioCompletion(
     completionMap.set(userId, usersWithBio.has(userId));
   }
 
-  console.log(`[waterfallQueries] Bio completion: ${result.rows.length}/${userIds.length}`);
+  const queryTimeMs = Date.now() - startTime;
+  console.log(`[waterfallQueries] Bio completion: ${result.rows.length}/${userIds.length} (${queryTimeMs}ms)`);
 
   return completionMap;
 }
@@ -123,25 +157,11 @@ export async function checkUsersOfferCompletion(
   pool: Pool,
   userIds: string[]
 ): Promise<Map<string, boolean>> {
-  if (userIds.length === 0) return new Map();
-
-  const query = `
-    SELECT DISTINCT creator_user_id as user_id
-    FROM offers
-    WHERE creator_user_id = ANY($1::uuid[])
-  `;
-
-  const result = await pool.query(query, [userIds]);
-  const usersWithOffers = new Set(result.rows.map(r => r.user_id));
-
-  const completionMap = new Map<string, boolean>();
-  for (const userId of userIds) {
-    completionMap.set(userId, usersWithOffers.has(userId));
-  }
-
-  console.log(`[waterfallQueries] Offer completion: ${result.rows.length}/${userIds.length}`);
-
-  return completionMap;
+  return checkBulkUserCompletion(pool, userIds, {
+    tableName: 'offers',
+    userIdColumn: 'creator_user_id',
+    logLabel: 'Offer completion',
+  });
 }
 
 /**
@@ -151,24 +171,10 @@ export async function checkUsersWishlistCompletion(
   pool: Pool,
   userIds: string[]
 ): Promise<Map<string, boolean>> {
-  if (userIds.length === 0) return new Map();
-
-  const query = `
-    SELECT DISTINCT user_id
-    FROM wishlist_items
-    WHERE user_id = ANY($1::uuid[])
-    AND deleted_at = 0
-  `;
-
-  const result = await pool.query(query, [userIds]);
-  const usersWithWishlist = new Set(result.rows.map(r => r.user_id));
-
-  const completionMap = new Map<string, boolean>();
-  for (const userId of userIds) {
-    completionMap.set(userId, usersWithWishlist.has(userId));
-  }
-
-  console.log(`[waterfallQueries] Wishlist completion: ${result.rows.length}/${userIds.length}`);
-
-  return completionMap;
+  return checkBulkUserCompletion(pool, userIds, {
+    tableName: 'wishlist_items',
+    userIdColumn: 'user_id',
+    additionalConditions: 'deleted_at = 0',
+    logLabel: 'Wishlist completion',
+  });
 }

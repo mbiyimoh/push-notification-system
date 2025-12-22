@@ -22,6 +22,7 @@ export async function getTopTargetShoeForUsers(
 ): Promise<Map<string, TargetShoeResult>> {
   if (userIds.length === 0) return new Map();
 
+  const overallStartTime = Date.now();
   const targetShoes = new Map<string, TargetShoeResult>();
 
   // Primary: User's Top Desired Item
@@ -169,6 +170,7 @@ export async function getTopTargetShoeForUsers(
     }
   }
 
-  console.log(`[targetShoeQueries] Total target shoes found: ${targetShoes.size}/${userIds.length}`);
+  const overallTimeMs = Date.now() - overallStartTime;
+  console.log(`[targetShoeQueries] Total target shoes found: ${targetShoes.size}/${userIds.length} (${overallTimeMs}ms)`);
   return targetShoes;
 }
