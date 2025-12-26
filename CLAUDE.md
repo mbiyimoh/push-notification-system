@@ -26,6 +26,15 @@
                + VPN)                                                        checks)
 ```
 
+**CRITICAL FOR AI AGENTS:** When implementing features that require code changes AND configuration updates (environment variables, secrets, database migrations):
+
+1. **Complete ALL steps automatically** - The developer is a non-technical founder who expects Claude to handle the entire deployment workflow
+2. **After code implementation:** ALWAYS rebuild Docker image and deploy to production WITHOUT being asked
+3. **After adding secrets to GCP:** ALWAYS rebuild and deploy to activate them
+4. **After database migrations:** Run locally first, then ensure production deployment happens
+
+**Why this matters:** Code changes alone don't reach production. Docker images must be rebuilt and deployed. Secrets must be added to GCP AND the image must be rebuilt to load them. Missing these steps means features appear implemented but don't actually work in production.
+
 ### Before Making Changes
 - [ ] Understand what you're changing and why
 - [ ] Check current git status: `git status`
@@ -303,7 +312,33 @@ FIREBASE_CLIENT_EMAIL     - Firebase service account email
 FIREBASE_PRIVATE_KEY      - Firebase private key (with \n escapes)
 GRAPHQL_ENDPOINT          - GraphQL API for device tokens
 CADENCE_SERVICE_URL       - http://localhost:3002 (ALWAYS localhost in unified container)
+SLACK_WEBHOOK_URL         - Webhook for #push-automation-system (live alerts)
+SLACK_WEBHOOK_URL_TESTS   - Webhook for #push-automation-system-tests (test alerts)
 ```
+
+**Adding New Secrets to GCP (Dec 2025 Pattern):**
+
+When adding new environment variables that contain sensitive values:
+
+```bash
+# 1. Add secret to GCP Secret Manager
+# Format: KEY1="value1"\nKEY2="value2"\n...
+# Must include ALL existing secrets plus new ones
+gcloud secrets versions add production-shared-main-push-secrets \
+  --data-file=/path/to/new-env-file
+
+# 2. CRITICAL: Rebuild Docker image to pick up new secrets
+cd /Users/AstroLab/Desktop/code-projects/push-notification-system
+gcloud builds submit --config cloudbuild.yaml .
+
+# 3. CRITICAL: Deploy to production
+gh workflow run deploy-push.yml --repo Tradeblock-dev/main-backend
+
+# 4. Verify secrets loaded
+curl https://push.tradeblock.us/api/health
+```
+
+**Gotcha:** Adding secrets to GCP alone doesn't activate them. The container reads secrets from mounted file at startup. You MUST rebuild and redeploy for new secrets to take effect.
 
 **Local Development (.env file):**
 ```
@@ -411,6 +446,7 @@ npx dotenv -e ../../.env -- npm run migrate
 **Current Migrations:**
 - `003_automation_executions.sql` - Historical execution records
 - `004_execution_progress.sql` - Real-time progress tracking for polling
+- `005_add_exclusion_breakdown.sql` - JSONB column for cadence exclusion details (used by Slack alerts)
 
 **Gotcha:** The migration script looks for `PUSH_CADENCE_DATABASE_URL`, but Node.js doesn't auto-load `.env`. Use `npx dotenv -e ../../.env --` prefix for local runs.
 
@@ -421,6 +457,40 @@ npx dotenv -e ../../.env -- npm run migrate
 - **ScriptExecutor**: Python script runner for audience generation (legacy V1)
 - **V2 TypeScript Generators**: Native TypeScript audience generators (preferred, replacing Python)
 - **executionProgressDB**: Database operations for polling-based execution tracking (connects to Neon)
+- **slackNotifier**: Non-blocking Slack alerts for automation events (start, complete, fail)
+
+### Slack Automation Alerts (Dec 2025)
+
+**What it does:** Sends real-time Slack notifications when automations start and complete, with full metrics including audience size, cadence exclusions breakdown, and delivery stats.
+
+**Key files:**
+- `services/push-blaster/src/lib/slackNotifier.ts` - Notification module with Block Kit formatting
+- `services/push-blaster/src/lib/automationEngine.ts:505-516` - Start notification integration
+- `services/push-blaster/src/lib/automationEngine.ts:404-417` - Completion notification integration
+- `services/push-blaster/src/lib/automationEngine.ts:433-443` - Failure notification integration
+
+**Channels:**
+- `#push-automation-system` - Live automation alerts (`SLACK_WEBHOOK_URL`)
+- `#push-automation-system-tests` - Test mode alerts (`SLACK_WEBHOOK_URL_TESTS`)
+
+**Integration points:**
+- Start: After Phase 1 (audience generation) completes
+- Complete: After successful `trackExecutionComplete()`
+- Fail: In catch block with partial metrics
+
+**Message format:** Uses Slack Block Kit for rich formatting with emojis, metrics tables, and "View Details" links to production UI.
+
+**Gotchas:**
+- All notification functions are non-blocking (try/catch that never throws)
+- If webhook URLs are missing, notifications are silently skipped (graceful degradation)
+- Metrics are queried from `automation_executions` table after completion
+- Exclusion breakdown requires migration `005_add_exclusion_breakdown.sql`
+- Test mode routes to separate channel automatically based on automation settings
+
+**Extending this:**
+- To add new notification types, follow pattern in `slackNotifier.ts`
+- All metrics must be stored in database before completion notification fires
+- Never throw errors from notification functions - automation execution must not fail due to Slack issues
 
 ### Audience Generation: V2 TypeScript Generators
 
